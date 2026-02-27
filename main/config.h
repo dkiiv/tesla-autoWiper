@@ -32,7 +32,7 @@
 #define CAN_WIPER_RX_PIN        GPIO_NUM_7
 
 /* Both buses run at the same rate.  Adjust if your car uses a different speed. */
-#define CAN_BAUD_RATE           TWAI_TIMING_CONFIG_500KBITS()
+#define CAN_BAUD_RATE           TWAI_TIMING_CONFIG_1MBITS()
 
 /*
  * CAN ID of the wiper control message you want to intercept.
