@@ -1,0 +1,15 @@
+services:
+  idf:
+    build: .
+    image: tesla-autowiper-idf
+    volumes:
+      - .:/project                # source code (macOS bind mount)
+      - idf-build-cache:/build    # build output in a real Linux volume, NOT on the Mac FS
+    environment:
+      - IDF_TARGET=${IDF_TARGET:-esp32p4}
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+
+volumes:
+  idf-build-cache:

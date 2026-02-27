@@ -1,0 +1,43 @@
+{
+  "name": "tesla-autoWiper ESP-IDF",
+
+  // Reuse the same image/compose setup you already have
+  "dockerComposeFile": ["../docker-compose.yml"],
+  "service": "idf",
+  "workspaceFolder": "/project",
+
+  // Extensions that run INSIDE the container
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "espressif.esp-idf-extension",  // official ESP-IDF extension — gives you build/flash buttons
+        "ms-vscode.cpptools",            // C/C++ IntelliSense
+        "ms-vscode.cmake-tools"          // CMake integration
+      ],
+      "settings": {
+        // Point the C++ extension at the IDF toolchain inside the container
+        "C_Cpp.default.compilerPath": "/opt/esp/tools/xtensa-esp-elf/esp-13.2.0_20240530/xtensa-esp-elf/bin/xtensa-esp-elf-gcc",
+        "C_Cpp.default.includePath": [
+          "${workspaceFolder}/**",
+          "${IDF_PATH}/components/**"
+        ],
+        "C_Cpp.default.defines": [
+          "ESP_PLATFORM",
+          "IDF_VER=\"v5.3.2\""
+        ],
+        "C_Cpp.default.intelliSenseMode": "gcc-x64",
+        "idf.espIdfPath": "${env:IDF_PATH}",
+        "idf.toolsPath": "/opt/esp/tools",
+        "idf.customExtraPaths": "",
+        "idf.port": "/dev/ttyUSB0"
+      }
+    }
+  },
+
+  // Runs once after the container starts — generates compile_commands.json
+  // which gives IntelliSense accurate per-file compiler flags
+  "postStartCommand": "idf.py set-target esp32p4 2>/dev/null; idf.py reconfigure 2>/dev/null || true",
+
+  // Mount the serial device for flashing from within VSCode
+  "runArgs": []
+}

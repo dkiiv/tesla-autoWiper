@@ -1,0 +1,37 @@
+# ── ESP-IDF build output ─────────────────────────────────────────────────────
+build/
+sdkconfig.old
+
+# sdkconfig is generated from sdkconfig.defaults — commit defaults, not this
+# (comment out the next line if you WANT to track your exact config)
+sdkconfig
+
+# ── Docker / dev environment ──────────────────────────────────────────────────
+.env
+
+# Extracted firmware blobs (reproducible from source, no need to track)
+firmware/
+
+# ── VSCode ────────────────────────────────────────────────────────────────────
+.vscode/*
+# But keep the devcontainer config — it's useful for everyone
+!.vscode/extensions.json
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverrideF
+
+# ── Linux ─────────────────────────────────────────────────────────────────────
+*~
+.fuse_hidden*
+
+# ── Windows ───────────────────────────────────────────────────────────────────
+Thumbs.db
+Desktop.ini
+
+# ── Python (esptool etc.) ─────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
