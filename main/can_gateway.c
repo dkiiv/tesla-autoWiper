@@ -8,13 +8,13 @@
  *  ┌─────────────────────────────────────────────────────────────────────────┐
  *  │                            ESP32-P4                                     │
  *  │                                                                         │
- *  │  CAN0 ──► can0_rx_task ──► [wiper_logic] ──► to_can1_queue             │
+ *  │  CAN0 ──► can0_rx_task ──► [wiper_logic] ──► to_can1_queue              │
  *  │                                                       │                 │
- *  │                                               can1_tx_task ──► CAN1    │
+ *  │                                               can1_tx_task ──► CAN1     │
  *  │                                                                         │
- *  │  CAN0 ◄── can0_tx_task ◄── to_can0_queue                               │
+ *  │  CAN0 ◄── can0_tx_task ◄── to_can0_queue                                │
  *  │                                    ▲                                    │
- *  │                             can1_rx_task ◄── CAN1                      │
+ *  │                             can1_rx_task ◄── CAN1                       │
  *  └─────────────────────────────────────────────────────────────────────────┘
  *
  *  can0_rx_task   – Receives from CAN0 (car side). Offers the frame to
