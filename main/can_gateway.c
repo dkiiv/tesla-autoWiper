@@ -145,7 +145,11 @@ void can_gateway_can0_rx_task(void *arg)
          * Give wiper logic a chance to modify the frame.
          * Frames that don't match WIPER_CAN_MSG_ID are returned untouched.
          */
-        wiper_logic_process_can_frame(&msg);
+        
+        /* Only act on the wiper control frame; pass everything else through */
+        if (msg.identifier == WIPER_CAN_MSG_ID) {
+            wiper_logic_process_can_frame(&msg);
+        }
 
         if (xQueueSend(s_to_can1_queue, &msg, 0) != pdTRUE) {
             ESP_LOGW(TAG, "to_can1_queue full – frame 0x%03lX dropped",

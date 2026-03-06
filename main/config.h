@@ -39,7 +39,7 @@
  * Set this to the frame ID you discovered via CAN sniffing.
  * All other IDs are forwarded unchanged.
  */
-#define WIPER_CAN_MSG_ID        0x3E7   /* <<< REPLACE with your car's actual ID */
+#define WIPER_CAN_MSG_ID        0x3E9   /* DAS_bodyControls */
 #define WIPER_CAN_MSG_LEN       8       /* expected DLC of that frame */
 
 /* ─── LIN bus ────────────────────────────────────────────────────────────── */
