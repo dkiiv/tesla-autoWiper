@@ -22,18 +22,21 @@
  * Task structure
  * ──────────────
  *   lin_sensor_task          – polls sensor at LIN_POLL_INTERVAL_MS
- *   can_gateway_car_rx_task  – RX from car, optionally modifies, enqueues for TX
- *   can_gateway_wiper_tx_task– TX to wiper actuator
+ *   can_gateway_can0_rx_task – RX from car, optionally modifies, enqueues for TX
+ *   can_gateway_can1_tx_task – TX to wiper actuator
+ *   can_gateway_can1_rx_task – RX from wiper actuator, pass-through to car
+ *   can_gateway_can0_tx_task – TX back to car
  *   wiper_logic_task         – optional background / timer logic
+ *   health_task              – periodic system status log
  *
- * Getting started
+ * Fault tolerance
  * ───────────────
- *  1. Edit config.h:  set pin numbers, CAN ID of your wiper message.
- *  2. Set DEBUG_LIN_SENSOR=1 and observe raw sensor bytes on the serial
- *     monitor.  Verify rain_intensity maps to byte 0 nibble as expected.
- *  3. Sniff CAN traffic while operating the wiper stalk; find WIPER_CAN_MSG_ID.
- *  4. Implement encode_wiper_command() in wiper_logic.c.
- *  5. Tune RAIN_INTENSITY_* thresholds in config.h.
+ *   LIN sensor is OPTIONAL. If the sensor is absent or unresponsive,
+ *   lin_sensor_get_latest() returns valid=false and the CAN gateway
+ *   forwards all frames unmodified. The car's wiper stalk continues
+ *   to work normally.
+ *
+ *   CAN passthrough is ALWAYS active, independent of LIN health.
  */
 
 #include "config.h"
@@ -47,11 +50,41 @@
 
 static const char *TAG = "MAIN";
 
+/* ─── Health / watchdog task ─────────────────────────────────────────────── */
+
+/**
+ * @brief  Periodically logs system state so you can confirm what's running.
+ *
+ * Prints every 5 seconds:
+ *   - LIN sensor validity and last rain intensity
+ *   - A reminder that CAN passthrough is always active
+ */
+static void health_task(void *arg)
+{
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+
+        lin_rain_sensor_data_t sensor;
+        lin_sensor_get_latest(&sensor);
+
+        if (sensor.valid) {
+            ESP_LOGI(TAG, "[HEALTH] LIN ✓  rain=%d  light=%d  status=0x%02X",
+                     sensor.rain_intensity,
+                     sensor.light_intensity,
+                     sensor.status);
+        } else {
+            ESP_LOGW(TAG, "[HEALTH] LIN ✗  sensor absent or unresponsive – "
+                          "CAN passthrough active, wiper stalk works normally");
+        }
+    }
+}
+
 /* ─── app_main ───────────────────────────────────────────────────────────── */
 
 void app_main(void)
 {
-    esp_log_level_set("*", ESP_LOG_VERBOSE);  // set most verbose log level, for debug/POC
+    esp_log_level_set("*", ESP_LOG_VERBOSE);
+
     ESP_LOGI(TAG, "╔══════════════════════════════════════╗");
     ESP_LOGI(TAG, "║  Rain-Sensor Wiper Controller  v0.1  ║");
     ESP_LOGI(TAG, "║  ESP32-P4  –  ESP-IDF                ║");
@@ -59,24 +92,37 @@ void app_main(void)
 
     /* ── 1. Initialise subsystems ────────────────────────────────────── */
 
-    ESP_ERROR_CHECK(lin_sensor_init());
-    ESP_LOGI(TAG, "LIN sensor initialised");
+    /*
+     * LIN sensor: non-fatal. A missing transceiver or disconnected sensor
+     * just means the sensor task will keep logging timeouts and sensor.valid
+     * stays false. CAN passthrough is unaffected.
+     */
+    esp_err_t lin_ret = lin_sensor_init();
+    if (lin_ret != ESP_OK) {
+        ESP_LOGW(TAG, "LIN sensor init failed (%s) – running in CAN-passthrough-only mode",
+                 esp_err_to_name(lin_ret));
+    } else {
+        ESP_LOGI(TAG, "LIN sensor initialised");
+    }
 
+    /*
+     * CAN gateway: fatal. Without CAN we can't do anything useful.
+     */
     ESP_ERROR_CHECK(can_gateway_init());
     ESP_LOGI(TAG, "CAN gateway initialised");
 
     ESP_ERROR_CHECK(wiper_logic_init());
     ESP_LOGI(TAG, "Wiper logic initialised");
 
+    ESP_LOGI(TAG, "──────────────────────────────────────");
+    ESP_LOGI(TAG, "  CAN passthrough: ALWAYS ACTIVE");
+    ESP_LOGI(TAG, "  LIN sensor:      %s", lin_ret == ESP_OK ? "OK" : "ABSENT – passthrough only");
+    ESP_LOGI(TAG, "──────────────────────────────────────");
+
     /* ── 2. Spawn tasks ──────────────────────────────────────────────── */
 
-    /* ── Core 0 ─────────────────────────────────────────────────────── */
+    /* Core 0 ──────────────────────────────────────────────────────────── */
 
-    /*
-     * LIN sensor task – Core 0
-     * Polls the rain sensor at LIN_POLL_INTERVAL_MS and stores the result
-     * in a mutex-protected shared variable read by wiper_logic.
-     */
     xTaskCreatePinnedToCore(
         lin_sensor_task,
         "lin_sensor",
@@ -87,10 +133,6 @@ void app_main(void)
         0
     );
 
-    /*
-     * Wiper logic background task – Core 0
-     * Optional time-based logic: hysteresis, ramp-down, inhibit during wash.
-     */
     xTaskCreatePinnedToCore(
         wiper_logic_task,
         "wiper_logic",
@@ -101,13 +143,18 @@ void app_main(void)
         0
     );
 
-    /* ── Core 1 ─────────────────────────────────────────────────────── */
+    xTaskCreatePinnedToCore(
+        health_task,
+        "health",
+        2048,
+        NULL,
+        1,   /* lowest priority */
+        NULL,
+        0
+    );
 
-    /*
-     * CAN0 RX task – Core 1  (car side → wiper side)
-     * Receives frames from the car, passes them through wiper_logic, and
-     * enqueues them for CAN1 TX.
-     */
+    /* Core 1 ──────────────────────────────────────────────────────────── */
+
     xTaskCreatePinnedToCore(
         can_gateway_can0_rx_task,
         "can0_rx",
@@ -118,10 +165,6 @@ void app_main(void)
         1
     );
 
-    /*
-     * CAN1 TX task – Core 1  (car side → wiper side)
-     * Drains the to_can1 queue onto the wiper actuator bus.
-     */
     xTaskCreatePinnedToCore(
         can_gateway_can1_tx_task,
         "can1_tx",
@@ -132,11 +175,6 @@ void app_main(void)
         1
     );
 
-    /*
-     * CAN1 RX task – Core 1  (wiper side → car side)
-     * Receives frames from the wiper actuator and enqueues them for CAN0 TX.
-     * No frame modification on this return path.
-     */
     xTaskCreatePinnedToCore(
         can_gateway_can1_rx_task,
         "can1_rx",
@@ -147,10 +185,6 @@ void app_main(void)
         1
     );
 
-    /*
-     * CAN0 TX task – Core 1  (wiper side → car side)
-     * Drains the to_can0 queue back onto the car bus.
-     */
     xTaskCreatePinnedToCore(
         can_gateway_can0_tx_task,
         "can0_tx",
@@ -162,9 +196,4 @@ void app_main(void)
     );
 
     ESP_LOGI(TAG, "All tasks started – system running");
-
-    /*
-     * app_main is itself a task and will be deleted when it returns.
-     * Nothing more to do here; all work happens in the tasks above.
-     */
 }
