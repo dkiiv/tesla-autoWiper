@@ -37,7 +37,6 @@ run_idf() {
 copy_firmware() {
   local out_dir="./firmware"
   mkdir -p "$out_dir"
-  # The build volume is named <project>_idf-build-cache
   local vol
   vol="$(basename "$(pwd)" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')_idf-build-cache"
   docker run --rm \
@@ -47,6 +46,8 @@ copy_firmware() {
       cp /build_vol/*.bin /out/ 2>/dev/null || true
       cp /build_vol/*.elf /out/ 2>/dev/null || true
       cp /build_vol/flasher_args.json /out/ 2>/dev/null || true
+      cp -r /build_vol/bootloader /out/ 2>/dev/null || true
+      cp -r /build_vol/partition_table /out/ 2>/dev/null || true
     "
   echo "✅  Firmware copied to ${out_dir}/"
   ls -lh "${out_dir}/"
@@ -129,10 +130,21 @@ Environment variables:
 
 macOS flashing:
   USB serial devices appear as /dev/tty.usbserial-XXXX on Mac.
+  ls /dev/tty.*
   Flash from the host using esptool directly:
     pip install esptool
-    cd firmware && esptool.py --chip esp32p4 --port /dev/tty.usbserial-0001 \\
-      write_flash @flasher_args.json
+    cd firmware
+    esptool.py --chip esp32p4 --port /dev/tty.usbmodem101 --baud 460800 \
+      write_flash --flash_mode dio --flash_freq 80m --flash_size 2MB \
+      0x2000 bootloader/bootloader.bin \
+      0x8000 partition_table/partition-table.bin \
+      0x10000 wiper_controller.bin
+
+macOS monitoring:
+  pip3 install pyserial --break-system-packages
+  python3 -m serial.tools.miniterm /dev/tty.usbmodem101 115200
+
+    Ctrl+] to exit monitor
 EOF
     ;;
 esac
