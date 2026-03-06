@@ -51,6 +51,7 @@ static const char *TAG = "MAIN";
 
 void app_main(void)
 {
+    esp_log_level_set("*", ESP_LOG_VERBOSE);  // set most verbose log level, for debug/POC
     ESP_LOGI(TAG, "╔══════════════════════════════════════╗");
     ESP_LOGI(TAG, "║  Rain-Sensor Wiper Controller  v0.1  ║");
     ESP_LOGI(TAG, "║  ESP32-P4  –  ESP-IDF                ║");
