@@ -5,7 +5,6 @@
 #   ./idf.sh build
 #   ./idf.sh flash
 #   ./idf.sh monitor
-#   ./idf.sh flash monitor
 #   ./idf.sh menuconfig
 #   ./idf.sh shell
 #   ./idf.sh clean
@@ -15,6 +14,7 @@ set -euo pipefail
 
 COMPOSE="docker compose"
 BUILD_DIR="/build"   # named volume mount point — keeps build OFF the macOS bind mount
+PORT="${FLASH_PORT:-/dev/tty.usbmodem101}"
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -53,6 +53,20 @@ copy_firmware() {
   ls -lh "${out_dir}/"
 }
 
+ensure_esptool() {
+  if ! command -v esptool.py &>/dev/null; then
+    echo "📦  esptool not found — installing..."
+    pip3 install "esptool==4.8.1" --break-system-packages
+  fi
+}
+
+ensure_pyserial() {
+  if ! python3 -c "import serial" &>/dev/null; then
+    echo "📦  pyserial not found — installing..."
+    pip3 install pyserial --break-system-packages
+  fi
+}
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 CMD="${1:-help}"
@@ -61,8 +75,6 @@ shift || true
 case "$CMD" in
 
   build)
-    # Run set-target AND build in a single container invocation to avoid
-    # timestamp drift between separate docker run calls on macOS
     ensure_image
     $COMPOSE run --rm idf idf.py -B "$BUILD_DIR" \
       set-target "${IDF_TARGET:-esp32p4}" \
@@ -71,19 +83,35 @@ case "$CMD" in
     ;;
 
   flash)
-    run_idf -p "${FLASH_PORT:-/dev/ttyUSB0}" flash "$@"
+    ensure_esptool
+    echo "⚡  Flashing to ${PORT}..."
+    cd firmware
+    esptool.py --chip esp32p4 --port "$PORT" --baud 460800 \
+      write_flash --flash_mode dio --flash_freq 80m --flash_size 2MB \
+      0x2000 bootloader/bootloader.bin \
+      0x8000 partition_table/partition-table.bin \
+      0x10000 wiper_controller.bin
     ;;
 
   monitor)
-    ensure_image
-    $COMPOSE run --rm idf idf.py -B "$BUILD_DIR" \
-      -p "${FLASH_PORT:-/dev/ttyUSB0}" monitor "$@"
+    ensure_pyserial
+    echo "🖥️   Opening monitor on ${PORT} — exit with Ctrl+]"
+    python3 -m serial.tools.miniterm "$PORT" 115200
     ;;
 
   "flash monitor")
-    ensure_image
-    $COMPOSE run --rm idf idf.py -B "$BUILD_DIR" \
-      -p "${FLASH_PORT:-/dev/ttyUSB0}" flash monitor "$@"
+    ensure_esptool
+    ensure_pyserial
+    echo "⚡  Flashing to ${PORT}..."
+    cd firmware
+    esptool.py --chip esp32p4 --port "$PORT" --baud 460800 \
+      write_flash --flash_mode dio --flash_freq 80m --flash_size 2MB \
+      0x2000 bootloader/bootloader.bin \
+      0x8000 partition_table/partition-table.bin \
+      0x10000 wiper_controller.bin
+    cd ..
+    echo "🖥️   Opening monitor on ${PORT} — exit with Ctrl+]"
+    python3 -m serial.tools.miniterm "$PORT" 115200
     ;;
 
   menuconfig)
@@ -115,36 +143,26 @@ Usage: ./idf.sh <command> [options]
 
 Commands:
   build              Set target + build firmware, copy .bin/.elf to ./firmware/
-  flash              Flash the device  (FLASH_PORT=... ./idf.sh flash)
-  monitor            Open serial monitor
-  flash monitor      Flash then monitor
-  menuconfig         Open Kconfig menu
+  flash              Flash the device from the host (macOS/Linux)
+  monitor            Open serial monitor from the host
+  flash monitor      Flash then open monitor
+  menuconfig         Open Kconfig menu (runs inside container)
   clean              Run idf.py fullclean
   firmware           Re-copy built firmware to ./firmware/ without rebuilding
   shell              Drop into an interactive container shell
   rebuild            Rebuild the Docker image
 
 Environment variables:
-  FLASH_PORT         Serial port, default /dev/ttyUSB0
+  FLASH_PORT         Serial port, default /dev/tty.usbmodem101
+                     Find yours with: ls /dev/tty.*
   IDF_TARGET         ESP-IDF target chip, default esp32p4
 
-macOS flashing:
-  USB serial devices appear as /dev/tty.usbserial-XXXX on Mac.
-  ls /dev/tty.*
-  Flash from the host using esptool directly:
-    pip install esptool
-    cd firmware
-    esptool.py --chip esp32p4 --port /dev/tty.usbmodem101 --baud 460800 \
-      write_flash --flash_mode dio --flash_freq 80m --flash_size 2MB \
-      0x2000 bootloader/bootloader.bin \
-      0x8000 partition_table/partition-table.bin \
-      0x10000 wiper_controller.bin
-
-macOS monitoring:
-  pip3 install pyserial --break-system-packages
-  python3 -m serial.tools.miniterm /dev/tty.usbmodem101 115200
-
-    Ctrl+] to exit monitor
+Examples:
+  ./idf.sh build
+  ./idf.sh flash
+  FLASH_PORT=/dev/tty.usbserial-0001 ./idf.sh flash
+  ./idf.sh monitor
+  ./idf.sh flash monitor
 EOF
     ;;
 esac
