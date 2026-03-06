@@ -159,7 +159,7 @@ do_flash() {
 do_monitor() {
   ensure_pyserial
   echo "🖥️   Opening monitor on ${PORT}  [${OS}] — exit with Ctrl+]"
-  $PYTHON -m serial.tools.miniterm "$PORT" 115200
+  $PYTHON -m serial.tools.miniterm "$PORT" 115200 --filter colorize
 }
 
 # ── main ──────────────────────────────────────────────────────────────────────
