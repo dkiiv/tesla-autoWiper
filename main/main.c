@@ -116,7 +116,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "──────────────────────────────────────");
     ESP_LOGI(TAG, "  CAN passthrough: ALWAYS ACTIVE");
-    ESP_LOGI(TAG, "  LIN sensor:      %s", lin_ret == ESP_OK ? "OK" : "ABSENT – passthrough only");
+    ESP_LOGI(TAG, "  LIN sensor init:      %s", lin_ret == ESP_OK ? "OK" : "ERROR");
     ESP_LOGI(TAG, "──────────────────────────────────────");
 
     /* ── 2. Spawn tasks ──────────────────────────────────────────────── */
