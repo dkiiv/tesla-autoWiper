@@ -22,11 +22,7 @@
  * Task structure
  * ──────────────
  *   lin_sensor_task          - polls sensor at LIN_POLL_INTERVAL_MS
- *   can_gateway_can0_rx_task - RX from car, optionally modifies, enqueues for TX
- *   can_gateway_can1_tx_task - TX to wiper actuator
- *   can_gateway_can1_rx_task - RX from wiper actuator, pass-through to car
- *   can_gateway_can0_tx_task - TX back to car
- *   wiper_logic_task         - optional background / timer logic
+ *   can_gateway_task         - CAN gateway
  *   health_task              - periodic system status log
  *
  * Fault tolerance
@@ -124,23 +120,11 @@ void app_main(void)
     xTaskCreate(health_task, "health",
         TASK_STACK_HEALTH, NULL, TASK_PRIORITY_HEALTH, NULL);
 
-    xTaskCreate(can_gateway_can0_rx_task, "can0_rx",
-        TASK_STACK_CAN_RX, NULL, TASK_PRIORITY_CAN_RX, NULL);
-
-    xTaskCreate(can_gateway_can1_tx_task, "can1_tx",
-        TASK_STACK_CAN_TX, NULL, TASK_PRIORITY_CAN_TX, NULL);
-
-    xTaskCreate(can_gateway_can1_rx_task, "can1_rx",
-        TASK_STACK_CAN_RX, NULL, TASK_PRIORITY_CAN_RX, NULL);
-
-    xTaskCreate(can_gateway_can0_tx_task, "can0_tx",
-        TASK_STACK_CAN_TX, NULL, TASK_PRIORITY_CAN_TX, NULL);
+    xTaskCreate(can_gateway_task, "can_gateway",
+        TASK_STACK_CAN_GATEWAY, NULL, TASK_PRIORITY_CAN_GATEWAY, NULL);
 
     xTaskCreate(lin_sensor_task, "lin_sensor",
         TASK_STACK_LIN_POLL, NULL, TASK_PRIORITY_LIN_POLL, NULL);
-
-    xTaskCreate(wiper_logic_task, "wiper_logic",
-        TASK_STACK_WIPER_LOGIC, NULL, TASK_PRIORITY_WIPER_LOGIC, NULL);
 
     ESP_LOGI(TAG, "All tasks started - system running");
 }

@@ -95,16 +95,3 @@ void wiper_logic_process_can_frame(twai_message_t *msg)
     /* ── Overwrite speed and checksum in the CAN frame ────── */
     encode_wiper_speed(msg->data, sensor.rain_intensity);
 }
-
-void wiper_logic_task(void *arg)
-{
-    /*
-     * Background task - available for time-based logic such as:
-     *   - Hold wipers on for N seconds after rain stops
-     *   - Gradually ramp speed down instead of cutting off abruptly
-     *   - Inhibit wipers during a car-wash signal on a separate GPIO
-     */
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
-}

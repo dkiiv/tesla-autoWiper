@@ -27,7 +27,7 @@
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/semphr.h"
+#include "freertos/portmacro.h"
 #include "esp_log.h"
 #include "string.h"
 
@@ -36,7 +36,12 @@ static const char *TAG = "LIN";
 /* ─── Internal state ────────────────────────────────────────────────────── */
 
 static lin_rain_sensor_data_t s_latest_data = { 0 };
-static SemaphoreHandle_t      s_data_mutex  = NULL;
+
+/*
+ * Protects the shared LIN sensor data.
+ * Critical section is only held while copying the structure.
+ */
+static portMUX_TYPE s_data_mux = portMUX_INITIALIZER_UNLOCKED;
 
 /* ─── LIN protocol helpers ──────────────────────────────────────────────── */
 
@@ -128,12 +133,6 @@ esp_err_t lin_sensor_init(void)
                                         256,  /* TX buffer */
                                         0, NULL, 0));
 
-    s_data_mutex = xSemaphoreCreateMutex();
-    if (s_data_mutex == NULL) {
-        ESP_LOGE(TAG, "Failed to create data mutex");
-        return ESP_ERR_NO_MEM;
-    }
-
     ESP_LOGI(TAG, "LIN UART initialised  baud=%d  TX=GPIO%d  RX=GPIO%d",
              LIN_BAUD, LIN_TX_PIN, LIN_RX_PIN);
     return ESP_OK;
@@ -214,13 +213,10 @@ void lin_sensor_task(void *arg)
         esp_err_t ret = lin_sensor_poll(&local);
 
         if (ret == ESP_OK) {
-            /* Push valid data to shared state */
-            if (xSemaphoreTake(s_data_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-                s_latest_data = local;
-                xSemaphoreGive(s_data_mutex);
-            }
+            portENTER_CRITICAL(&s_data_mux);
+            s_latest_data = local;
+            portEXIT_CRITICAL(&s_data_mux);
         }
-        /* On error, s_latest_data.valid stays false until next success */
 
         vTaskDelay(pdMS_TO_TICKS(LIN_POLL_INTERVAL_MS));
     }
@@ -228,12 +224,11 @@ void lin_sensor_task(void *arg)
 
 void lin_sensor_get_latest(lin_rain_sensor_data_t *out)
 {
-    if (out == NULL) return;
-
-    if (xSemaphoreTake(s_data_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-        *out = s_latest_data;
-        xSemaphoreGive(s_data_mutex);
-    } else {
-        out->valid = false;
+    if (out == NULL) {
+        return;
     }
+
+    portENTER_CRITICAL(&s_data_mux);
+    *out = s_latest_data;
+    portEXIT_CRITICAL(&s_data_mux);
 }

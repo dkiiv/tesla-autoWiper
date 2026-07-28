@@ -1,32 +1,6 @@
 /**
  * @file can_gateway.c
  * @brief Bidirectional CAN MITM gateway - dual TWAI controller, 4-task architecture.
- *
- * Task layout
- * ───────────
- *
- *  ┌─────────────────────────────────────────────────────────────────────────┐
- *  │                            ESP32-P4                                     │
- *  │                                                                         │
- *  │  CAN0 ──► can0_rx_task ──► [wiper_logic] ──► to_can1_queue              │
- *  │                                                       │                 │
- *  │                                               can1_tx_task ──► CAN1     │
- *  │                                                                         │
- *  │  CAN0 ◄── can0_tx_task ◄── to_can0_queue                                │
- *  │                                    ▲                                    │
- *  │                             can1_rx_task ◄── CAN1                       │
- *  └─────────────────────────────────────────────────────────────────────────┘
- *
- *  can0_rx_task   - Receives from CAN0 (car side). Offers the frame to
- *                   wiper_logic_process_can_frame() before forwarding.
- *                   All frames (modified or not) go to to_can1_queue.
- *
- *  can1_tx_task   - Drains to_can1_queue → transmits on CAN1 (wiper side).
- *
- *  can1_rx_task   - Receives from CAN1 (wiper side). No modification.
- *                   All frames go to to_can0_queue.
- *
- *  can0_tx_task   - Drains to_can0_queue → transmits on CAN0 (car side).
  */
 
 #include "can_gateway.h"
@@ -45,12 +19,9 @@ static const char *TAG = "CAN_GW";
 /* ─── Internal handles & queues ─────────────────────────────────────────── */
 
 static twai_handle_t   s_can0 = NULL;   /* TWAI0 - car side          */
-static twai_handle_t   s_can1 = NULL;   /* TWAI1 - wiper actuator    */
+static twai_handle_t   s_can1 = NULL;   /* TWAI1 - actuator side     */
 
 #define TX_QUEUE_DEPTH   32
-
-static QueueHandle_t   s_to_can1_queue = NULL;   /* car → wiper     */
-static QueueHandle_t   s_to_can0_queue = NULL;   /* wiper → car     */
 
 /* ─── Debug helper ──────────────────────────────────────────────────────── */
 
@@ -80,7 +51,7 @@ static esp_err_t init_twai_controller(int controller_id,
                                                                  TWAI_MODE_NORMAL);
     gconfig.controller_id = controller_id;
     gconfig.rx_queue_len  = 32;
-    gconfig.tx_queue_len  = 0;   /* we manage our own TX queues */
+    gconfig.tx_queue_len  = 32;
 
     twai_timing_config_t tconfig = CAN_BAUD_RATE;
     twai_filter_config_t fconfig = TWAI_FILTER_CONFIG_ACCEPT_ALL();
@@ -114,107 +85,50 @@ esp_err_t can_gateway_init(void)
     ret = init_twai_controller(1, CAN_WIPER_TX_PIN, CAN_WIPER_RX_PIN, &s_can1);
     if (ret != ESP_OK) return ret;
 
-    s_to_can1_queue = xQueueCreate(TX_QUEUE_DEPTH, sizeof(twai_message_t));
-    s_to_can0_queue = xQueueCreate(TX_QUEUE_DEPTH, sizeof(twai_message_t));
-
-    if (!s_to_can1_queue || !s_to_can0_queue) {
-        ESP_LOGE(TAG, "Failed to create TX queues");
-        return ESP_ERR_NO_MEM;
-    }
-
     ESP_LOGI(TAG, "CAN gateway ready - both buses up, queues allocated");
     return ESP_OK;
 }
 
-/* ─── Task: CAN0 RX  (car → wiper, with wiper logic applied) ────────────── */
+/* ─── Task: CAN gateway  (car to actuator, with wiper logic applied) ────────────── */
 
-void can_gateway_can0_rx_task(void *arg)
+void can_gateway_task(void *arg)
 {
-    ESP_LOGI(TAG, "CAN0 RX task started (car side)");
+    ESP_LOGI(TAG, "CAN gateway task started");
 
     twai_message_t msg;
+    esp_err_t ret;
 
     while (1) {
-        if (twai_receive_v2(s_can0, &msg, portMAX_DELAY) != ESP_OK) {
-            continue;
-        }
+        int can0_cnt = 0;
+        int can1_cnt = 0;
 
-        log_frame("CAN0→CAN1", &msg);
-
-        /*
-         * Give wiper logic a chance to modify the frame.
-         * Frames that don't match WIPER_CAN_MSG_ID are returned untouched.
-         */
-        
-        /* Only act on the wiper control frame; pass everything else through */
-        if (msg.identifier == WIPER_CAN_MSG_ID) {
-            wiper_logic_process_can_frame(&msg);
-        }
-
-        if (xQueueSend(s_to_can1_queue, &msg, 0) != pdTRUE) {
-            ESP_LOGW(TAG, "to_can1_queue full - frame 0x%03lX dropped",
-                     (unsigned long)msg.identifier);
-        }
-    }
-}
-
-/* ─── Task: CAN0 TX  (drain queue → car ECU) ────────────────────────────── */
-
-void can_gateway_can0_tx_task(void *arg)
-{
-    ESP_LOGI(TAG, "CAN0 TX task started (car side)");
-
-    twai_message_t msg;
-
-    while (1) {
-        if (xQueueReceive(s_to_can0_queue, &msg, portMAX_DELAY) == pdTRUE) {
-            esp_err_t ret = twai_transmit_v2(s_can0, &msg, pdMS_TO_TICKS(20));
+        /* CAN0 to CAN1  (car to actuator) */
+        while (can0_cnt < 32 &&
+          twai_receive_v2(s_can0, &msg, 0) == ESP_OK) {
+            can0_cnt++;
+            if (msg.identifier == WIPER_CAN_MSG_ID) {
+                wiper_logic_process_can_frame(&msg);
+            }
+            ret = twai_transmit_v2(s_can1, &msg, pdMS_TO_TICKS(1));
             if (ret != ESP_OK) {
-                ESP_LOGW(TAG, "CAN0 TX error 0x%03lX: %s",
+                ESP_LOGW(TAG, "CAN1 TX dropped  ID=0x%03lX  err=%s",
                          (unsigned long)msg.identifier, esp_err_to_name(ret));
             }
         }
-    }
-}
 
-/* ─── Task: CAN1 RX  (wiper actuator → car, pass-through) ───────────────── */
-
-void can_gateway_can1_rx_task(void *arg)
-{
-    ESP_LOGI(TAG, "CAN1 RX task started (wiper side)");
-
-    twai_message_t msg;
-
-    while (1) {
-        if (twai_receive_v2(s_can1, &msg, portMAX_DELAY) != ESP_OK) {
-            continue;
-        }
-
-        log_frame("CAN1→CAN0", &msg);
-
-        /* Pass-through: no modification on the return path */
-        if (xQueueSend(s_to_can0_queue, &msg, 0) != pdTRUE) {
-            ESP_LOGW(TAG, "to_can0_queue full - frame 0x%03lX dropped",
-                     (unsigned long)msg.identifier);
-        }
-    }
-}
-
-/* ─── Task: CAN1 TX  (drain queue → wiper actuator) ─────────────────────── */
-
-void can_gateway_can1_tx_task(void *arg)
-{
-    ESP_LOGI(TAG, "CAN1 TX task started (wiper side)");
-
-    twai_message_t msg;
-
-    while (1) {
-        if (xQueueReceive(s_to_can1_queue, &msg, portMAX_DELAY) == pdTRUE) {
-            esp_err_t ret = twai_transmit_v2(s_can1, &msg, pdMS_TO_TICKS(20));
+        /* CAN1 to CAN0  (actuator to car, pass-through) */
+        while (can1_cnt < 32 &&
+          twai_receive_v2(s_can1, &msg, 0) == ESP_OK) {
+            can1_cnt++;
+            ret = twai_transmit_v2(s_can0, &msg, pdMS_TO_TICKS(1));
             if (ret != ESP_OK) {
-                ESP_LOGW(TAG, "CAN1 TX error 0x%03lX: %s",
+                ESP_LOGW(TAG, "CAN0 TX dropped  ID=0x%03lX  err=%s",
                          (unsigned long)msg.identifier, esp_err_to_name(ret));
             }
+        }
+
+        if (can0_cnt <= 24 && can1_cnt <= 24) {
+           vTaskDelay(pdMS_TO_TICKS(1));
         }
     }
 }

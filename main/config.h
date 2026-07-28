@@ -64,15 +64,7 @@
 
 /* ─── Polling rate ───────────────────────────────────────────────────────── */
 
-/*
- * How often to query the LIN sensor.
- * 10 Hz  → 100 ms   (relaxed, lower bus load)
- * 20 Hz  →  50 ms
- * 50 Hz  →  20 ms   (aggressive, near the sensor's own update rate)
- *
- * Pick one and comment-out the others.
- */
-#define LIN_POLL_INTERVAL_MS    50      /* 20 Hz - good starting point */
+#define LIN_POLL_INTERVAL_MS    50      /* 20 Hz */
 // #define LIN_POLL_INTERVAL_MS 100     /* 10 Hz */
 // #define LIN_POLL_INTERVAL_MS  20     /* 50 Hz */
 
@@ -82,18 +74,13 @@
  * CAN RX tasks are highest priority - we must not drop frames.
  * TX tasks match RX so a burst of received frames drains quickly.
  * LIN polling is slightly lower; a missed poll just uses the previous value.
- * Wiper logic runs at background priority.
  */
-#define TASK_PRIORITY_CAN_RX        10
-#define TASK_PRIORITY_CAN_TX        10
+#define TASK_PRIORITY_CAN_GATEWAY    10
 #define TASK_PRIORITY_LIN_POLL       8
-#define TASK_PRIORITY_WIPER_LOGIC    6
 #define TASK_PRIORITY_HEALTH         1
 
-#define TASK_STACK_CAN_RX         4096
-#define TASK_STACK_CAN_TX         4096
+#define TASK_STACK_CAN_GATEWAY    4096
 #define TASK_STACK_LIN_POLL       4096
-#define TASK_STACK_WIPER_LOGIC    2048
 #define TASK_STACK_HEALTH         2048
 
 /* ─── Debug / logging ───────────────────────────────────────────────────── */
