@@ -161,7 +161,7 @@ esp_err_t lin_sensor_poll(lin_rain_sensor_data_t *out)
                                    pdMS_TO_TICKS(timeout_ms));
 
     if (received < read_len) {
-        ESP_LOGW(TAG, "Timeout – got %d of %d bytes", received, read_len);
+        ESP_LOGW(TAG, "Timeout - got %d of %d bytes", received, read_len);
         if (out) out->valid = false;
         return ESP_ERR_TIMEOUT;
     }
@@ -183,9 +183,9 @@ esp_err_t lin_sensor_poll(lin_rain_sensor_data_t *out)
 
         /*
          * VAG sensor byte map (verify against your specific part number):
-         *   Byte 0 – Rain intensity  bits [3:0]   (upper nibble = other flags)
-         *   Byte 1 – Light/brightness
-         *   Byte 2 – Sensor status
+         *   Byte 0 - Rain intensity  bits [3:0]   (upper nibble = other flags)
+         *   Byte 1 - Light/brightness
+         *   Byte 2 - Sensor status
          */
         out->rain_intensity = buf[0] & 0x0F;
         out->light_intensity = buf[1];

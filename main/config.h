@@ -23,11 +23,11 @@
 
 /* ─── CAN (TWAI) ─────────────────────────────────────────────────────────── */
 
-/* TWAI0  –  Car-side bus (we read incoming wiper frames from here) */
+/* TWAI0  -  Car-side bus (we read incoming wiper frames from here) */
 #define CAN_CAR_TX_PIN          GPIO_NUM_35
 #define CAN_CAR_RX_PIN          GPIO_NUM_36
 
-/* TWAI1  –  Wiper-actuator bus (we write potentially-modified frames here) */
+/* TWAI1  -  Wiper-actuator bus (we write potentially-modified frames here) */
 #define CAN_WIPER_TX_PIN        GPIO_NUM_31
 #define CAN_WIPER_RX_PIN        GPIO_NUM_34
 
@@ -72,14 +72,14 @@
  *
  * Pick one and comment-out the others.
  */
-#define LIN_POLL_INTERVAL_MS    50      /* 20 Hz – good starting point */
+#define LIN_POLL_INTERVAL_MS    50      /* 20 Hz - good starting point */
 // #define LIN_POLL_INTERVAL_MS 100     /* 10 Hz */
 // #define LIN_POLL_INTERVAL_MS  20     /* 50 Hz */
 
 /* ─── FreeRTOS task priorities & stack sizes ────────────────────────────── */
 
 /*
- * CAN RX tasks are highest priority – we must not drop frames.
+ * CAN RX tasks are highest priority - we must not drop frames.
  * TX tasks match RX so a burst of received frames drains quickly.
  * LIN polling is slightly lower; a missed poll just uses the previous value.
  * Wiper logic runs at background priority.

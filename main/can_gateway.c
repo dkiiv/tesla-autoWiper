@@ -1,6 +1,6 @@
 /**
  * @file can_gateway.c
- * @brief Bidirectional CAN MITM gateway – dual TWAI controller, 4-task architecture.
+ * @brief Bidirectional CAN MITM gateway - dual TWAI controller, 4-task architecture.
  *
  * Task layout
  * ───────────
@@ -17,16 +17,16 @@
  *  │                             can1_rx_task ◄── CAN1                       │
  *  └─────────────────────────────────────────────────────────────────────────┘
  *
- *  can0_rx_task   – Receives from CAN0 (car side). Offers the frame to
+ *  can0_rx_task   - Receives from CAN0 (car side). Offers the frame to
  *                   wiper_logic_process_can_frame() before forwarding.
  *                   All frames (modified or not) go to to_can1_queue.
  *
- *  can1_tx_task   – Drains to_can1_queue → transmits on CAN1 (wiper side).
+ *  can1_tx_task   - Drains to_can1_queue → transmits on CAN1 (wiper side).
  *
- *  can1_rx_task   – Receives from CAN1 (wiper side). No modification.
+ *  can1_rx_task   - Receives from CAN1 (wiper side). No modification.
  *                   All frames go to to_can0_queue.
  *
- *  can0_tx_task   – Drains to_can0_queue → transmits on CAN0 (car side).
+ *  can0_tx_task   - Drains to_can0_queue → transmits on CAN0 (car side).
  */
 
 #include "can_gateway.h"
@@ -44,8 +44,8 @@ static const char *TAG = "CAN_GW";
 
 /* ─── Internal handles & queues ─────────────────────────────────────────── */
 
-static twai_handle_t   s_can0 = NULL;   /* TWAI0 – car side          */
-static twai_handle_t   s_can1 = NULL;   /* TWAI1 – wiper actuator    */
+static twai_handle_t   s_can0 = NULL;   /* TWAI0 - car side          */
+static twai_handle_t   s_can1 = NULL;   /* TWAI1 - wiper actuator    */
 
 #define TX_QUEUE_DEPTH   32
 
@@ -122,7 +122,7 @@ esp_err_t can_gateway_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    ESP_LOGI(TAG, "CAN gateway ready – both buses up, queues allocated");
+    ESP_LOGI(TAG, "CAN gateway ready - both buses up, queues allocated");
     return ESP_OK;
 }
 
@@ -152,7 +152,7 @@ void can_gateway_can0_rx_task(void *arg)
         }
 
         if (xQueueSend(s_to_can1_queue, &msg, 0) != pdTRUE) {
-            ESP_LOGW(TAG, "to_can1_queue full – frame 0x%03lX dropped",
+            ESP_LOGW(TAG, "to_can1_queue full - frame 0x%03lX dropped",
                      (unsigned long)msg.identifier);
         }
     }
@@ -194,7 +194,7 @@ void can_gateway_can1_rx_task(void *arg)
 
         /* Pass-through: no modification on the return path */
         if (xQueueSend(s_to_can0_queue, &msg, 0) != pdTRUE) {
-            ESP_LOGW(TAG, "to_can0_queue full – frame 0x%03lX dropped",
+            ESP_LOGW(TAG, "to_can0_queue full - frame 0x%03lX dropped",
                      (unsigned long)msg.identifier);
         }
     }

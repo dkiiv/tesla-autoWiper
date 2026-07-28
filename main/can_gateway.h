@@ -1,6 +1,6 @@
 /**
  * @file can_gateway.h
- * @brief Bidirectional CAN MITM gateway – 4-task symmetric architecture.
+ * @brief Bidirectional CAN MITM gateway - 4-task symmetric architecture.
  *
  * Both CAN buses forward to each other.  Traffic in the car→wiper direction
  * passes through wiper_logic_process_can_frame() so the wiper control frame

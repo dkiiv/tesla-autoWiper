@@ -4,21 +4,21 @@
  *
  * Flow
  * ────
- *  1. lin_sensor_task()  populates a shared rain_intensity value (0–15).
+ *  1. lin_sensor_task()  populates a shared rain_intensity value (0-15).
  *  2. can_gateway_can0_rx_task() calls wiper_logic_process_can_frame()
  *     for every frame received from the car.
  *  3. wiper_logic_process_can_frame() reads the latest rain intensity and,
  *     if the incoming frame matches WIPER_CAN_MSG_ID, writes a new wiper
- *     speed value (0–15) into the relevant byte(s) of the frame.
+ *     speed value (0-15) into the relevant byte(s) of the frame.
  *  4. The modified frame is forwarded to the wiper actuator.
  *
  * Wiper speed scale
  * ─────────────────
- *  The car's wiper CAN message carries a 0–15 speed value:
+ *  The car's wiper CAN message carries a 0-15 speed value:
  *    0  = off
  *    15 = maximum speed
  *
- *  The LIN rain sensor also returns a 0–15 rain intensity value:
+ *  The LIN rain sensor also returns a 0-15 rain intensity value:
  *    0  = dry
  *    15 = heavy rain
  *

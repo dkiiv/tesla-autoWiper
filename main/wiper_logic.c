@@ -1,6 +1,6 @@
 /**
  * @file wiper_logic.c
- * @brief Rain-sensor-driven wiper control – implementation.
+ * @brief Rain-sensor-driven wiper control - implementation.
  */
 
 #include "wiper_logic.h"
@@ -15,7 +15,7 @@ static const char *TAG = "WIPER";
 
 /* ─── Internal state ────────────────────────────────────────────────────── */
 
-static uint8_t s_last_wiper_speed = 0;   /* 0–15, last value written to bus */
+static uint8_t s_last_wiper_speed = 0;   /* 0-15, last value written to bus */
 
 /* ─── CAN frame encoding ────────────────────────────────────────────────── */
 
@@ -51,7 +51,7 @@ static uint8_t compute_checksum(const uint8_t *data)
  * All signals are little-endian (Intel) unsigned.
  *
  * @param[in,out] data   Pointer to msg->data[0].
- * @param[in]     speed  Target wiper speed, 0–15.
+ * @param[in]     speed  Target wiper speed, 0-15.
  */
 static void encode_wiper_speed(uint8_t *data, uint8_t speed)
 {
@@ -99,7 +99,7 @@ void wiper_logic_process_can_frame(twai_message_t *msg)
 void wiper_logic_task(void *arg)
 {
     /*
-     * Background task – available for time-based logic such as:
+     * Background task - available for time-based logic such as:
      *   - Hold wipers on for N seconds after rain stops
      *   - Gradually ramp speed down instead of cutting off abruptly
      *   - Inhibit wipers during a car-wash signal on a separate GPIO
