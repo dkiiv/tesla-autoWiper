@@ -1,6 +1,6 @@
 /**
  * @file main.c
- * @brief ESP32-P4 rain-sensor-driven wiper controller – entry point.
+ * @brief ESP32-P4 rain-sensor-driven wiper controller - entry point.
  *
  * System overview
  * ───────────────
@@ -21,13 +21,13 @@
  *
  * Task structure
  * ──────────────
- *   lin_sensor_task          – polls sensor at LIN_POLL_INTERVAL_MS
- *   can_gateway_can0_rx_task – RX from car, optionally modifies, enqueues for TX
- *   can_gateway_can1_tx_task – TX to wiper actuator
- *   can_gateway_can1_rx_task – RX from wiper actuator, pass-through to car
- *   can_gateway_can0_tx_task – TX back to car
- *   wiper_logic_task         – optional background / timer logic
- *   health_task              – periodic system status log
+ *   lin_sensor_task          - polls sensor at LIN_POLL_INTERVAL_MS
+ *   can_gateway_can0_rx_task - RX from car, optionally modifies, enqueues for TX
+ *   can_gateway_can1_tx_task - TX to wiper actuator
+ *   can_gateway_can1_rx_task - RX from wiper actuator, pass-through to car
+ *   can_gateway_can0_tx_task - TX back to car
+ *   wiper_logic_task         - optional background / timer logic
+ *   health_task              - periodic system status log
  *
  * Fault tolerance
  * ───────────────
@@ -73,7 +73,7 @@ static void health_task(void *arg)
                      sensor.light_intensity,
                      sensor.status);
         } else {
-            ESP_LOGW(TAG, "[HEALTH] LIN ✗  sensor absent or unresponsive – "
+            ESP_LOGW(TAG, "[HEALTH] LIN ✗  sensor absent or unresponsive - "
                           "CAN passthrough active, wiper stalk works normally");
         }
     }
@@ -83,11 +83,11 @@ static void health_task(void *arg)
 
 void app_main(void)
 {
-    esp_log_level_set("*", ESP_LOG_VERBOSE);
+    esp_log_level_set("*", ESP_LOG_VERBOSE);  // CHANGE ME FOR PROD; REMOVE BEFORE FLIGHT
 
     ESP_LOGI(TAG, "╔══════════════════════════════════════╗");
-    ESP_LOGI(TAG, "║  Rain-Sensor Wiper Controller  v0.1  ║");
-    ESP_LOGI(TAG, "║  ESP32-P4  –  ESP-IDF                ║");
+    ESP_LOGI(TAG, "║  Rain-Sensor Wiper Controller        ║");
+    ESP_LOGI(TAG, "║  ESP32     -  ESP-IDF                ║");
     ESP_LOGI(TAG, "╚══════════════════════════════════════╝");
 
     /* ── 1. Initialise subsystems ────────────────────────────────────── */
@@ -99,7 +99,7 @@ void app_main(void)
      */
     esp_err_t lin_ret = lin_sensor_init();
     if (lin_ret != ESP_OK) {
-        ESP_LOGW(TAG, "LIN sensor init failed (%s) – running in CAN-passthrough-only mode",
+        ESP_LOGW(TAG, "LIN sensor init failed (%s) - running in CAN-passthrough-only mode",
                  esp_err_to_name(lin_ret));
     } else {
         ESP_LOGI(TAG, "LIN sensor initialised");
@@ -121,79 +121,26 @@ void app_main(void)
 
     /* ── 2. Spawn tasks ──────────────────────────────────────────────── */
 
-    /* Core 0 ──────────────────────────────────────────────────────────── */
+    xTaskCreate(health_task, "health",
+        TASK_STACK_HEALTH, NULL, TASK_PRIORITY_HEALTH, NULL);
 
-    xTaskCreatePinnedToCore(
-        lin_sensor_task,
-        "lin_sensor",
-        TASK_STACK_LIN_POLL,
-        NULL,
-        TASK_PRIORITY_LIN_POLL,
-        NULL,
-        0
-    );
+    xTaskCreate(can_gateway_can0_rx_task, "can0_rx",
+        TASK_STACK_CAN_RX, NULL, TASK_PRIORITY_CAN_RX, NULL);
 
-    xTaskCreatePinnedToCore(
-        wiper_logic_task,
-        "wiper_logic",
-        TASK_STACK_WIPER_LOGIC,
-        NULL,
-        TASK_PRIORITY_WIPER_LOGIC,
-        NULL,
-        0
-    );
+    xTaskCreate(can_gateway_can1_tx_task, "can1_tx",
+        TASK_STACK_CAN_TX, NULL, TASK_PRIORITY_CAN_TX, NULL);
 
-    xTaskCreatePinnedToCore(
-        health_task,
-        "health",
-        2048,
-        NULL,
-        1,   /* lowest priority */
-        NULL,
-        0
-    );
+    xTaskCreate(can_gateway_can1_rx_task, "can1_rx",
+        TASK_STACK_CAN_RX, NULL, TASK_PRIORITY_CAN_RX, NULL);
 
-    /* Core 1 ──────────────────────────────────────────────────────────── */
+    xTaskCreate(can_gateway_can0_tx_task, "can0_tx",
+        TASK_STACK_CAN_TX, NULL, TASK_PRIORITY_CAN_TX, NULL);
 
-    xTaskCreatePinnedToCore(
-        can_gateway_can0_rx_task,
-        "can0_rx",
-        TASK_STACK_CAN_RX,
-        NULL,
-        TASK_PRIORITY_CAN_RX,
-        NULL,
-        1
-    );
+    xTaskCreate(lin_sensor_task, "lin_sensor",
+        TASK_STACK_LIN_POLL, NULL, TASK_PRIORITY_LIN_POLL, NULL);
 
-    xTaskCreatePinnedToCore(
-        can_gateway_can1_tx_task,
-        "can1_tx",
-        TASK_STACK_CAN_TX,
-        NULL,
-        TASK_PRIORITY_CAN_TX,
-        NULL,
-        1
-    );
+    xTaskCreate(wiper_logic_task, "wiper_logic",
+        TASK_STACK_WIPER_LOGIC, NULL, TASK_PRIORITY_WIPER_LOGIC, NULL);
 
-    xTaskCreatePinnedToCore(
-        can_gateway_can1_rx_task,
-        "can1_rx",
-        TASK_STACK_CAN_RX,
-        NULL,
-        TASK_PRIORITY_CAN_RX,
-        NULL,
-        1
-    );
-
-    xTaskCreatePinnedToCore(
-        can_gateway_can0_tx_task,
-        "can0_tx",
-        TASK_STACK_CAN_TX,
-        NULL,
-        TASK_PRIORITY_CAN_TX,
-        NULL,
-        1
-    );
-
-    ESP_LOGI(TAG, "All tasks started – system running");
+    ESP_LOGI(TAG, "All tasks started - system running");
 }
