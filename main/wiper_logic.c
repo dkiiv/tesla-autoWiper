@@ -41,12 +41,11 @@ static uint8_t compute_checksum(const uint8_t *data)
 }
 
 /**
- * @brief  Write wiper speed, rolling counter, and checksum into the CAN frame.
+ * @brief  Write wiper speed, and checksum into the CAN frame.
  *
  * Signal layout from DBC:
  *
  *   DAS_wiperSpeed         : 4|4@1+   → bits [7:4] of byte 0  (upper nibble)
- *   DAS_bodyControlsCounter: 52|4@1+  → bits [7:4] of byte 6  (upper nibble)
  *   DAS_bodyControlsChecksum: 56|8@1+ → byte 7 (full byte)
  *
  * All signals are little-endian (Intel) unsigned.
