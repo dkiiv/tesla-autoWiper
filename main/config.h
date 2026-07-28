@@ -88,11 +88,13 @@
 #define TASK_PRIORITY_CAN_TX        10
 #define TASK_PRIORITY_LIN_POLL       8
 #define TASK_PRIORITY_WIPER_LOGIC    6
+#define TASK_PRIORITY_HEALTH         1
 
 #define TASK_STACK_CAN_RX         4096
 #define TASK_STACK_CAN_TX         4096
 #define TASK_STACK_LIN_POLL       4096
 #define TASK_STACK_WIPER_LOGIC    2048
+#define TASK_STACK_HEALTH         2048
 
 /* ─── Debug / logging ───────────────────────────────────────────────────── */
 
