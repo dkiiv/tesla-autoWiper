@@ -85,9 +85,9 @@ wiper_controller/
 ├── CMakeLists.txt
 └── main/
     ├── CMakeLists.txt
-    ├── config.h          ← all pins, IDs, thresholds  (edit this first)
+    ├── config.h          ← all pins, IDs, thresholds
     ├── main.c            ← startup, task creation
     ├── lin_sensor.h/.c   ← LIN master driver + break workaround
     ├── can_gateway.h/.c  ← dual TWAI MITM gateway
-    └── wiper_logic.h/.c  ← rain→speed mapping + CAN frame encoding (YOUR CODE)
+    └── wiper_logic.h/.c  ← rain→speed mapping + CAN frame encoding
 ```
