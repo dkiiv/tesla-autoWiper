@@ -158,19 +158,19 @@ void can_gateway_can0_rx_task(void *arg)
     }
 }
 
-/* ─── Task: CAN1 TX  (drain queue → wiper actuator) ─────────────────────── */
+/* ─── Task: CAN0 TX  (drain queue → car ECU) ────────────────────────────── */
 
-void can_gateway_can1_tx_task(void *arg)
+void can_gateway_can0_tx_task(void *arg)
 {
-    ESP_LOGI(TAG, "CAN1 TX task started (wiper side)");
+    ESP_LOGI(TAG, "CAN0 TX task started (car side)");
 
     twai_message_t msg;
 
     while (1) {
-        if (xQueueReceive(s_to_can1_queue, &msg, portMAX_DELAY) == pdTRUE) {
-            esp_err_t ret = twai_transmit_v2(s_can1, &msg, pdMS_TO_TICKS(20));
+        if (xQueueReceive(s_to_can0_queue, &msg, portMAX_DELAY) == pdTRUE) {
+            esp_err_t ret = twai_transmit_v2(s_can0, &msg, pdMS_TO_TICKS(20));
             if (ret != ESP_OK) {
-                ESP_LOGW(TAG, "CAN1 TX error 0x%03lX: %s",
+                ESP_LOGW(TAG, "CAN0 TX error 0x%03lX: %s",
                          (unsigned long)msg.identifier, esp_err_to_name(ret));
             }
         }
@@ -200,19 +200,19 @@ void can_gateway_can1_rx_task(void *arg)
     }
 }
 
-/* ─── Task: CAN0 TX  (drain queue → car ECU) ────────────────────────────── */
+/* ─── Task: CAN1 TX  (drain queue → wiper actuator) ─────────────────────── */
 
-void can_gateway_can0_tx_task(void *arg)
+void can_gateway_can1_tx_task(void *arg)
 {
-    ESP_LOGI(TAG, "CAN0 TX task started (car side)");
+    ESP_LOGI(TAG, "CAN1 TX task started (wiper side)");
 
     twai_message_t msg;
 
     while (1) {
-        if (xQueueReceive(s_to_can0_queue, &msg, portMAX_DELAY) == pdTRUE) {
-            esp_err_t ret = twai_transmit_v2(s_can0, &msg, pdMS_TO_TICKS(20));
+        if (xQueueReceive(s_to_can1_queue, &msg, portMAX_DELAY) == pdTRUE) {
+            esp_err_t ret = twai_transmit_v2(s_can1, &msg, pdMS_TO_TICKS(20));
             if (ret != ESP_OK) {
-                ESP_LOGW(TAG, "CAN0 TX error 0x%03lX: %s",
+                ESP_LOGW(TAG, "CAN1 TX error 0x%03lX: %s",
                          (unsigned long)msg.identifier, esp_err_to_name(ret));
             }
         }
