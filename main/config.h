@@ -24,12 +24,12 @@
 /* ─── CAN (TWAI) ─────────────────────────────────────────────────────────── */
 
 /* TWAI0  –  Car-side bus (we read incoming wiper frames from here) */
-#define CAN_CAR_TX_PIN          GPIO_NUM_23
-#define CAN_CAR_RX_PIN          GPIO_NUM_22
+#define CAN_CAR_TX_PIN          GPIO_NUM_35
+#define CAN_CAR_RX_PIN          GPIO_NUM_36
 
 /* TWAI1  –  Wiper-actuator bus (we write potentially-modified frames here) */
-#define CAN_WIPER_TX_PIN        GPIO_NUM_21
-#define CAN_WIPER_RX_PIN        GPIO_NUM_20
+#define CAN_WIPER_TX_PIN        GPIO_NUM_31
+#define CAN_WIPER_RX_PIN        GPIO_NUM_34
 
 /* Both buses run at the same rate.  Adjust if your car uses a different speed. */
 #define CAN_BAUD_RATE           TWAI_TIMING_CONFIG_1MBITS()
@@ -45,8 +45,8 @@
 /* ─── LIN bus ────────────────────────────────────────────────────────────── */
 
 #define LIN_UART_NUM            UART_NUM_1
-#define LIN_TX_PIN              GPIO_NUM_49
-#define LIN_RX_PIN              GPIO_NUM_48
+#define LIN_TX_PIN              GPIO_NUM_20
+#define LIN_RX_PIN              GPIO_NUM_21
 #define LIN_BAUD                19200   /* standard LIN baud rate */
 
 /*
