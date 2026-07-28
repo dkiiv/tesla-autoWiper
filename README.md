@@ -1,4 +1,4 @@
-# Rain-Sensor Wiper Controller – ESP32-P4
+# Rain-Sensor Wiper Controller - ESP32-P4
 
 An ESP project that sits between Tesla's AP-computer and car, using a VAG rain/light sensor over LIN bus to automatically control wiper speed.
 
@@ -7,27 +7,28 @@ An ESP project that sits between Tesla's AP-computer and car, using a VAG rain/l
 ## Architecture
 
 ```
-Rain/light sensor  ──LIN──►  ESP32-P4  ◄──CAN0──  AP-Computer
+Rain/light sensor  ──LIN──►  ESP32-P4  ◄──CAN0──  AP-Computer ("car")
+                           (magic here)
                                  │
-                                 └──────CAN1──►  Car
+                                 └──────CAN1──►  Actuator (wiper)
 ```
 
 The ESP32-P4 acts as:
-- **LIN master** – queries the Bosch/Continental VAG rain sensor (frame ID 0x21)
-- **CAN MITM gateway** – intercepts the wiper control CAN frame, modifies it based on rain intensity, and forwards it to the car
+- **LIN master** - queries the Bosch/Continental VAG rain sensor (frame ID 0x21)
+- **CAN MITM gateway** - intercepts the wiper control CAN frame, modifies it based on rain intensity, and forwards it to the car
 
 ---
 
 ## Hardware connections
 
-| Signal          | ESP32-P4 GPIO | Connected to           |
-|-----------------|--------------|------------------------|
-| CAN0 TX         | GPIO 4       | CAN transceiver 0 (car side)  |
-| CAN0 RX         | GPIO 5       | CAN transceiver 0             |
-| CAN1 TX         | GPIO 6       | CAN transceiver 1 (wiper side)|
-| CAN1 RX         | GPIO 7       | CAN transceiver 1             |
-| LIN TX (UART1)  | GPIO 8       | LIN transceiver TX            |
-| LIN RX (UART1)  | GPIO 9       | LIN transceiver RX            |
+| Signal          | ESP32-P4 GPIO | Connected to                  |
+|-----------------|---------------|-------------------------------|
+| CAN0 TX         | GPIO 35       | CAN transceiver 0 (car side)  |
+| CAN0 RX         | GPIO 36       | CAN transceiver 0             |
+| CAN1 TX         | GPIO 31       | CAN transceiver 1 (wiper side)|
+| CAN1 RX         | GPIO 34       | CAN transceiver 1             |
+| LIN TX (UART1)  | GPIO 20       | LIN transceiver TX            |
+| LIN RX (UART1)  | GPIO 21       | LIN transceiver RX            |
 
 > Configure in **`main/config.h`**
 
@@ -54,10 +55,10 @@ The ESP32 UART cannot natively emit a LIN break field (13+ dominant bits) becaus
 
 | Byte | Field            | Notes                                  |
 |------|------------------|----------------------------------------|
-| 0    | Rain intensity   | Lower nibble `[3:0]`, range 0–15       |
+| 0    | Rain intensity   | Lower nibble `[3:0]`, range 0-15       |
 | 1    | Light intensity  | 0 = bright, 255 = very dark            |
 | 2    | Status flags     | Sensor fault / init bits               |
-| 3–6  | Other channels   | IR / solar / additional light data     |
+| 3-6  | Other channels   | IR / solar / additional light data     |
 | 7    | Checksum         | LIN 2.x enhanced (PID included)        |
 
 Frame ID: `0x21`  →  Protected ID: `0x61`
