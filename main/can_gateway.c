@@ -101,11 +101,16 @@ void can_gateway_task(void *arg)
     while (1) {
         int can0_cnt = 0;
         int can1_cnt = 0;
+        bool got_frame = false;
 
         /* CAN0 to CAN1  (car to actuator) */
-        while (can0_cnt < 32 &&
-          twai_receive_v2(s_can0, &msg, 0) == ESP_OK) {
+        while (can0_cnt < 32) {
+            ret = twai_receive_v2(s_can0, &msg, 0);
+            ESP_LOGW(TAG, "TWAI-0 status: %s (%d)", esp_err_to_name(ret), ret);
+            if (ret != ESP_OK) break;
+
             can0_cnt++;
+            got_frame = true;
             if (msg.identifier == WIPER_CAN_MSG_ID) {
                 wiper_logic_process_can_frame(&msg);
             }
@@ -117,9 +122,13 @@ void can_gateway_task(void *arg)
         }
 
         /* CAN1 to CAN0  (actuator to car, pass-through) */
-        while (can1_cnt < 32 &&
-          twai_receive_v2(s_can1, &msg, 0) == ESP_OK) {
+        while (can1_cnt < 32) {
+            ret = twai_receive_v2(s_can1, &msg, 0);
+            ESP_LOGW(TAG, "TWAI-1 status: %s (%d)", esp_err_to_name(ret), ret);
+            if (ret != ESP_OK) break;
+
             can1_cnt++;
+            got_frame = true;
             ret = twai_transmit_v2(s_can0, &msg, pdMS_TO_TICKS(1));
             if (ret != ESP_OK) {
                 ESP_LOGW(TAG, "CAN0 TX dropped  ID=0x%03lX  err=%s",
@@ -127,8 +136,10 @@ void can_gateway_task(void *arg)
             }
         }
 
-        if (can0_cnt <= 24 && can1_cnt <= 24) {
-           vTaskDelay(pdMS_TO_TICKS(1));
+        if (!got_frame) {
+            vTaskDelay(pdMS_TO_TICKS(50));         /* no bus / bench */
+        } else if (can0_cnt <= 24 && can1_cnt <= 24) {
+            vTaskDelay(pdMS_TO_TICKS(1));          /* normal traffic */
         }
     }
 }
