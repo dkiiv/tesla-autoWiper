@@ -137,7 +137,7 @@ void can_gateway_task(void *arg)
         }
 
         if (!got_frame) {
-            vTaskDelay(pdMS_TO_TICKS(50));         /* no bus / bench */
+            vTaskDelay(pdMS_TO_TICKS(25));         /* no bus / bench */
         } else if (can0_cnt <= 24 && can1_cnt <= 24) {
             vTaskDelay(pdMS_TO_TICKS(1));          /* normal traffic */
         }
