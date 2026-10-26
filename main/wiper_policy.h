@@ -7,17 +7,33 @@
  * The caller (wiper_logic.c) supplies time and sensor data; this module
  * only holds the hysteresis state.
  *
+ * Authority
+ * ─────────
+ *  This module is AUTHORITATIVE.  While the rain sensor is healthy, the
+ *  speed on the bus is ours — higher OR lower than what the AP computer
+ *  asked for, including 0.  That is the whole point: Tesla's camera-based
+ *  auto-wipers routinely wipe when they shouldn't, and those phantom wipes
+ *  must be suppressed.  The AP computer's value is only used as a fallback
+ *  when we have no trustworthy sensor data.
+ *
  * Rules, in priority order
  * ────────────────────────
- *  1. Sensor invalid or stale            → pass the original frame through.
- *  2. Original speed is SNA/INVALID (15) → pass through (don't "fix" a frame
- *                                          the car itself marked invalid).
+ *  1. Sensor invalid or stale            → pass the original frame through
+ *                                          (fail-safe: a dead sensor must
+ *                                          never leave the car without wipers).
+ *  2. Original speed is SNA/INVALID (15) → pass through.  The AP computer
+ *                                          marks the signal invalid when it
+ *                                          isn't in control (boot, fault);
+ *                                          injecting a valid value then is
+ *                                          untested territory.  Revisit after
+ *                                          ROADMAP Phase 3 captures.
  *  3. Map rain intensity → target speed with a lookup table.
  *  4. Hysteresis: rises apply immediately; falls only after the lower
  *     target has persisted for fall_hold_ms (then drop to the highest target
  *     seen during that hold window).  Stops speed "hunting".
- *  5. Never go below the original request: out = max(original, ours).
- *     If the AP computer wants faster wipes than we do, it wins.
+ *  5. Output = our speed, regardless of the original request.  The frame is
+ *     only rewritten when the values differ (saves a pointless checksum
+ *     rewrite; the result on the bus is identical).
  *
  * What this does NOT know (yet)
  * ─────────────────────────────
@@ -42,10 +58,11 @@ typedef struct {
 } wiper_policy_config_t;
 
 typedef enum {
-    WIPER_DECISION_PASSTHROUGH_NO_SENSOR = 0,  /**< sensor invalid/stale         */
-    WIPER_DECISION_PASSTHROUGH_OEM_SNA,        /**< original frame says INVALID  */
-    WIPER_DECISION_PASSTHROUGH_OEM_HIGHER,     /**< car already asks for ≥ ours  */
-    WIPER_DECISION_OVERRIDE,                   /**< we raised the speed          */
+    WIPER_DECISION_PASSTHROUGH_NO_SENSOR = 0,  /**< sensor invalid/stale → car's value  */
+    WIPER_DECISION_PASSTHROUGH_OEM_SNA,        /**< original frame says INVALID        */
+    WIPER_DECISION_AGREE,                      /**< car already asks for exactly ours  */
+    WIPER_DECISION_OVERRIDE_UP,                /**< we raised the car's speed          */
+    WIPER_DECISION_OVERRIDE_DOWN,              /**< we lowered it (e.g. phantom wipe)  */
 } wiper_decision_reason_t;
 
 typedef struct {

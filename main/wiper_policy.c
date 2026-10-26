@@ -66,25 +66,27 @@ wiper_decision_t wiper_policy_step(wiper_policy_t *p, uint32_t now_ms,
         return d;
     }
 
-    /* 5. Never slow the wipers below what the car asked for. */
-    if (oem_speed >= p->current) {
-        d.reason = WIPER_DECISION_PASSTHROUGH_OEM_HIGHER;
-        return d;
+    /* 5. Authoritative: our speed goes on the bus, higher or lower. */
+    d.speed = p->current;
+    if (oem_speed == p->current) {
+        d.modify = false;                  /* identical bytes — nothing to rewrite */
+        d.reason = WIPER_DECISION_AGREE;
+    } else {
+        d.modify = true;
+        d.reason = (p->current > oem_speed) ? WIPER_DECISION_OVERRIDE_UP
+                                            : WIPER_DECISION_OVERRIDE_DOWN;
     }
-
-    d.speed  = p->current;
-    d.modify = true;
-    d.reason = WIPER_DECISION_OVERRIDE;
     return d;
 }
 
 const char *wiper_decision_reason_str(wiper_decision_reason_t r)
 {
     switch (r) {
-    case WIPER_DECISION_PASSTHROUGH_NO_SENSOR:  return "passthrough(no sensor)";
-    case WIPER_DECISION_PASSTHROUGH_OEM_SNA:    return "passthrough(oem SNA)";
-    case WIPER_DECISION_PASSTHROUGH_OEM_HIGHER: return "passthrough(oem >= ours)";
-    case WIPER_DECISION_OVERRIDE:               return "override";
+    case WIPER_DECISION_PASSTHROUGH_NO_SENSOR: return "passthrough(no sensor)";
+    case WIPER_DECISION_PASSTHROUGH_OEM_SNA:   return "passthrough(oem SNA)";
+    case WIPER_DECISION_AGREE:                 return "agree";
+    case WIPER_DECISION_OVERRIDE_UP:           return "override(up)";
+    case WIPER_DECISION_OVERRIDE_DOWN:         return "override(down)";
     }
     return "?";
 }

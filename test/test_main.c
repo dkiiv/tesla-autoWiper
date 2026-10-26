@@ -183,18 +183,73 @@ static void test_policy_passthrough(void)
     CHECK_EQ(d.modify, 0);
     CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_OEM_SNA);
 
-    d = wiper_policy_step(&p, 20, true, 0, 4, 10);      /* car already faster */
+    d = wiper_policy_step(&p, 20, true, 0, 9, 9);       /* car agrees exactly */
     CHECK_EQ(d.modify, 0);
-    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_OEM_HIGHER);
+    CHECK_EQ(d.speed, 9);
+    CHECK_EQ(d.reason, WIPER_DECISION_AGREE);
 
-    /* Still inside the 3 s fall hold from speed 8 → we keep overriding. */
+    /* Still inside the 3 s fall hold from speed 9 → we keep overriding. */
     d = wiper_policy_step(&p, 30, true, 0, 0, 0);
     CHECK_EQ(d.modify, 1);
-    CHECK_EQ(d.speed, 8);
+    CHECK_EQ(d.speed, 9);
+    CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_UP);
 
     p = make_policy();                                  /* fresh: dry + car off */
     d = wiper_policy_step(&p, 0, true, 0, 0, 0);
-    CHECK_EQ(d.modify, 0);                              /* equal → passthrough */
+    CHECK_EQ(d.modify, 0);                              /* equal → nothing to rewrite */
+    CHECK_EQ(d.reason, WIPER_DECISION_AGREE);
+}
+
+/*
+ * The module is AUTHORITATIVE: when the sensor is healthy, Tesla's request
+ * never wins.  This is the core reason the project exists — the camera-based
+ * auto-wipers fire when the glass is dry.
+ */
+static void test_policy_authoritative(void)
+{
+    puts("wiper_policy: authoritative (suppresses phantom wipes)");
+    wiper_policy_t p = make_policy();
+
+    /* Dry glass, car wants to wipe → we force OFF. */
+    wiper_decision_t d = wiper_policy_step(&p, 0, true, 0, 0, 5);
+    CHECK_EQ(d.modify, 1);
+    CHECK_EQ(d.speed, 0);
+    CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_DOWN);
+
+    /* Every possible car request on dry glass → always 0. */
+    for (int oem = 1; oem <= 14; oem++) {
+        d = wiper_policy_step(&p, 10, true, 0, 0, (uint8_t)oem);
+        CHECK_EQ(d.modify, 1);
+        CHECK_EQ(d.speed, 0);
+    }
+
+    /* Light rain (speed 2), car wants max → we hold 2. */
+    d = wiper_policy_step(&p, 20, true, 0, 2, 14);
+    CHECK_EQ(d.modify, 1);
+    CHECK_EQ(d.speed, 2);
+    CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_DOWN);
+
+    /* Heavy rain, car thinks dry → we raise. */
+    d = wiper_policy_step(&p, 30, true, 0, 10, 0);
+    CHECK_EQ(d.modify, 1);
+    CHECK_EQ(d.speed, 10);
+    CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_UP);
+
+    /* End-to-end through the frame encoder: car's phantom wipe is erased. */
+    p = make_policy();
+    uint8_t frame[8] = {0x51, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x00};  /* oem speed 5 */
+    frame[7] = tesla_checksum(0x3E9, frame, 8, 7);
+    d = wiper_policy_step(&p, 0, true, 0, 0, tesla_wiper_speed_get(frame));
+    if (d.modify) tesla_wiper_speed_set(frame, d.speed);
+    CHECK_EQ(tesla_wiper_speed_get(frame), 0);
+    CHECK_EQ(frame[0] & 0x0F, 0x1);                        /* low bits untouched */
+    CHECK_EQ(frame[6], 0x30);                              /* counter untouched */
+    CHECK_EQ(frame[7], ref_tesla_cs(0x3E9, frame, 8, 7));  /* valid checksum */
+
+    /* Fail-safe still holds: sensor gone → car's value passes through. */
+    d = wiper_policy_step(&p, 100, false, 0, 0, 5);
+    CHECK_EQ(d.modify, 0);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_NO_SENSOR);
 }
 
 static void test_policy_map_clamp(void)
@@ -267,6 +322,7 @@ int main(void)
     test_tesla_checksum();
     test_wiper_speed_packing();
     test_policy_passthrough();
+    test_policy_authoritative();
     test_policy_map_clamp();
     test_policy_hysteresis();
     test_policy_time_wrap();
