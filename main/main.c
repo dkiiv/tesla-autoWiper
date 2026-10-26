@@ -1,38 +1,36 @@
 /**
  * @file main.c
- * @brief ESP32-P4 rain-sensor-driven wiper controller - entry point.
+ * @brief Rain-sensor-driven wiper controller — entry point.
  *
  * System overview
  * ───────────────
  *
  *   ┌──────────────┐     LIN (19200 baud)      ┌──────────────────────┐
- *   │  Rain/light  │◄────────────────────────► │  ESP32-P4  (master)  │
- *   │   sensor     │     UART1 + transceiver   │                      │
+ *   │  VAG rain/   │◄────────────────────────► │  ESP32-C6 (prod)     │
+ *   │ light sensor │     UART1 + transceiver   │  ESP32-P4 (bench)    │
  *   └──────────────┘                           │                      │
  *                                              │  ┌────────────────┐  │
- *   ┌──────────────┐      CAN0 (1 mbps)        │  │  wiper_logic   │  │
- *   │   Car ECU    │◄────────────────────────► │  │  (intercept +  │  │
- *   └──────────────┘                           │  │   modify)      │  │
- *                                              │  └────────────────┘  │
- *   ┌──────────────┐      CAN1 (1 mbps)        │                      │
- *   │   Wiper      │◄────────────────────────► │                      │
- *   │  actuator    │                           └──────────────────────┘
+ *   ┌──────────────┐      CAN0 / TWAI0         │  │  wiper_logic + │  │
+ *   │ AP computer  │◄────────────────────────► │  │  wiper_policy  │  │
+ *   │ (car side)   │                           │  └────────────────┘  │
+ *   └──────────────┘                           │                      │
+ *   ┌──────────────┐      CAN1 / TWAI1         │                      │
+ *   │ Body ctrl /  │◄────────────────────────► │                      │
+ *   │ wiper side   │                           └──────────────────────┘
  *   └──────────────┘
  *
- * Task structure
- * ──────────────
- *   lin_sensor_task          - polls sensor at LIN_POLL_INTERVAL_MS
- *   can_gateway_task         - CAN gateway
- *   health_task              - periodic system status log
+ * Tasks
+ * ─────
+ *   can_car2act / can_act2car  - one forwarding task per direction (can_gateway.c)
+ *   can_alert                  - bus-off detection + recovery
+ *   lin_sensor                 - polls the rain sensor at LIN_POLL_INTERVAL_MS
+ *   health                     - one status line every HEALTH_LOG_INTERVAL_MS
  *
  * Fault tolerance
  * ───────────────
- *   LIN sensor is OPTIONAL. If the sensor is absent or unresponsive,
- *   lin_sensor_get_latest() returns valid=false and the CAN gateway
- *   forwards all frames unmodified. The car's wiper stalk continues
- *   to work normally.
- *
- *   CAN passthrough is ALWAYS active, independent of LIN health.
+ *   The LIN sensor is OPTIONAL.  If it is absent, unresponsive or its last
+ *   reading is older than LIN_STALE_MS, every frame is forwarded unmodified.
+ *   CAN passthrough never depends on LIN health.
  */
 
 #include "config.h"
@@ -46,32 +44,41 @@
 
 static const char *TAG = "MAIN";
 
-/* ─── Health / watchdog task ─────────────────────────────────────────────── */
+/* ─── Health task ─────────────────────────────────────────────────────── */
 
-/**
- * @brief  Periodically logs system state so you can confirm what's running.
- *
- * Prints every 5 seconds:
- *   - LIN sensor validity and last rain intensity
- *   - A reminder that CAN passthrough is always active
- */
+/* One compact line per interval — the first thing to read when debugging. */
 static void health_task(void *arg)
 {
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskDelay(pdMS_TO_TICKS(HEALTH_LOG_INTERVAL_MS));
 
-        lin_rain_sensor_data_t sensor;
-        lin_sensor_get_latest(&sensor);
+        lin_rain_sensor_data_t s;
+        lin_sensor_stats_t     ls;
+        can_gateway_stats_t    cs;
+        wiper_logic_stats_t    ws;
+        lin_sensor_get_latest(&s);
+        lin_sensor_get_stats(&ls);
+        can_gateway_get_stats(&cs);
+        wiper_logic_get_stats(&ws);
 
-        if (sensor.valid) {
-            ESP_LOGI(TAG, "[HEALTH] LIN ✓  rain=%d  light=%d  status=0x%02X",
-                     sensor.rain_intensity,
-                     sensor.light_intensity,
-                     sensor.status);
-        } else {
-            ESP_LOGW(TAG, "[HEALTH] LIN ✗  sensor absent or unresponsive - "
-                          "CAN passthrough active, wiper stalk works normally");
-        }
+        uint32_t age = s.valid ? lin_sensor_now_ms() - s.timestamp_ms : 0;
+        bool fresh = s.valid && age <= LIN_STALE_MS;
+
+        ESP_LOGI(TAG, "[HEALTH] LIN %s rain=%d light=%d age=%lums ok/to/cs/echo=%lu/%lu/%lu/%lu",
+                 fresh ? "OK " : "-- ", s.rain_intensity, s.light_intensity,
+                 (unsigned long)age, (unsigned long)ls.ok, (unsigned long)ls.timeout,
+                 (unsigned long)ls.bad_checksum, (unsigned long)ls.bad_echo);
+        ESP_LOGI(TAG, "[HEALTH] CAN car→act rx=%lu drop=%lu miss=%lu off=%lu | "
+                 "act→car rx=%lu drop=%lu miss=%lu off=%lu",
+                 (unsigned long)cs.car_to_act.rx, (unsigned long)cs.car_to_act.tx_drop,
+                 (unsigned long)(cs.car_to_act.rx_missed + cs.car_to_act.rx_overrun),
+                 (unsigned long)cs.car_to_act.bus_off,
+                 (unsigned long)cs.act_to_car.rx, (unsigned long)cs.act_to_car.tx_drop,
+                 (unsigned long)(cs.act_to_car.rx_missed + cs.act_to_car.rx_overrun),
+                 (unsigned long)cs.act_to_car.bus_off);
+        ESP_LOGI(TAG, "[HEALTH] WIPER 0x3E9 seen=%lu modified=%lu badDLC=%lu oem=%d out=%d",
+                 (unsigned long)ws.frames_seen, (unsigned long)ws.frames_modified,
+                 (unsigned long)ws.bad_dlc, ws.last_oem_speed, ws.last_out_speed);
     }
 }
 
@@ -79,52 +86,30 @@ static void health_task(void *arg)
 
 void app_main(void)
 {
-    esp_log_level_set("*", ESP_LOG_VERBOSE);  // CHANGE ME FOR PROD; REMOVE BEFORE FLIGHT
+    esp_log_level_set("*", APP_LOG_LEVEL);
 
-    ESP_LOGI(TAG, "╔══════════════════════════════════════╗");
-    ESP_LOGI(TAG, "║  Rain-Sensor Wiper Controller        ║");
-    ESP_LOGI(TAG, "║  ESP32     -  ESP-IDF                ║");
-    ESP_LOGI(TAG, "╚══════════════════════════════════════╝");
+    ESP_LOGI(TAG, "Rain-Sensor Wiper Controller  (%s, ESP-IDF %s)",
+             CONFIG_IDF_TARGET, esp_get_idf_version());
 
-    /* ── 1. Initialise subsystems ────────────────────────────────────── */
+    /* Order matters: wiper logic must be ready before CAN frames start flowing. */
+    ESP_ERROR_CHECK(wiper_logic_init());
 
-    /*
-     * LIN sensor: non-fatal. A missing transceiver or disconnected sensor
-     * just means the sensor task will keep logging timeouts and sensor.valid
-     * stays false. CAN passthrough is unaffected.
-     */
+    /* LIN: non-fatal. No sensor = passthrough-only mode. */
     esp_err_t lin_ret = lin_sensor_init();
     if (lin_ret != ESP_OK) {
-        ESP_LOGW(TAG, "LIN sensor init failed (%s) - running in CAN-passthrough-only mode",
+        ESP_LOGW(TAG, "LIN init failed (%s) - CAN passthrough only",
                  esp_err_to_name(lin_ret));
-    } else {
-        ESP_LOGI(TAG, "LIN sensor initialised");
     }
 
-    /*
-     * CAN gateway: fatal. Without CAN we can't do anything useful.
-     */
+    /* CAN: fatal. Without it we are just a break in the bus — reboot and retry. */
     ESP_ERROR_CHECK(can_gateway_init());
-    ESP_LOGI(TAG, "CAN gateway initialised");
+    ESP_ERROR_CHECK(can_gateway_start());
 
-    ESP_ERROR_CHECK(wiper_logic_init());
-    ESP_LOGI(TAG, "Wiper logic initialised");
+    if (lin_ret == ESP_OK) {
+        xTaskCreate(lin_sensor_task, "lin_sensor", TASK_STACK_LIN_POLL, NULL,
+                    TASK_PRIORITY_LIN_POLL, NULL);
+    }
+    xTaskCreate(health_task, "health", TASK_STACK_HEALTH, NULL, TASK_PRIORITY_HEALTH, NULL);
 
-    ESP_LOGI(TAG, "──────────────────────────────────────");
-    ESP_LOGI(TAG, "  CAN passthrough: ALWAYS ACTIVE");
-    ESP_LOGI(TAG, "  LIN sensor init:      %s", lin_ret == ESP_OK ? "OK" : "ERROR");
-    ESP_LOGI(TAG, "──────────────────────────────────────");
-
-    /* ── 2. Spawn tasks ──────────────────────────────────────────────── */
-
-    xTaskCreate(health_task, "health",
-        TASK_STACK_HEALTH, NULL, TASK_PRIORITY_HEALTH, NULL);
-
-    xTaskCreate(can_gateway_task, "can_gateway",
-        TASK_STACK_CAN_GATEWAY, NULL, TASK_PRIORITY_CAN_GATEWAY, NULL);
-
-    xTaskCreate(lin_sensor_task, "lin_sensor",
-        TASK_STACK_LIN_POLL, NULL, TASK_PRIORITY_LIN_POLL, NULL);
-
-    ESP_LOGI(TAG, "All tasks started - system running");
+    ESP_LOGI(TAG, "Running  CAN passthrough=ON  LIN=%s", lin_ret == ESP_OK ? "ON" : "OFF");
 }

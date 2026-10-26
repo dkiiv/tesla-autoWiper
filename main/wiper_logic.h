@@ -1,28 +1,18 @@
 /**
  * @file wiper_logic.h
- * @brief Rain-sensor-driven wiper control logic.
+ * @brief Glue between the CAN gateway, the LIN sensor and the wiper policy.
  *
  * Flow
  * ────
- *  1. lin_sensor_task()  populates a shared rain_intensity value (0-15).
- *  2. can_gateway_can0_rx_task() calls wiper_logic_process_can_frame()
- *     for every frame received from the car.
- *  3. wiper_logic_process_can_frame() reads the latest rain intensity and,
- *     if the incoming frame matches WIPER_CAN_MSG_ID, writes a new wiper
- *     speed value (0-15) into the relevant byte(s) of the frame.
- *  4. The modified frame is forwarded to the wiper actuator.
+ *  1. lin_sensor_task keeps a timestamped latest rain reading.
+ *  2. The car→actuator forwarding task calls wiper_logic_process_can_frame()
+ *     for every 0x3E9 DAS_bodyControls frame.
+ *  3. This module reads the sensor, asks wiper_policy what speed to send,
+ *     and — only if the policy says so — rewrites DAS_wiperSpeed and the
+ *     checksum in place (protocol.h).  Otherwise the frame is untouched.
  *
- * Wiper speed scale
- * ─────────────────
- *  The car's wiper CAN message carries a 0-15 speed value:
- *    0  = off
- *    15 = maximum speed
- *
- *  The LIN rain sensor also returns a 0-15 rain intensity value:
- *    0  = dry
- *    15 = heavy rain
- *
- *  Your job in wiper_logic.c is to decide how to map one to the other.
+ * The decision rules live in wiper_policy.h; the bit packing lives in
+ * protocol.h.  Both are pure C and host-tested.
  */
 
 #pragma once
@@ -31,26 +21,23 @@
 #include "driver/twai.h"
 #include <stdint.h>
 
-/* ─── Public API ────────────────────────────────────────────────────────── */
+typedef struct {
+    uint32_t frames_seen;      /**< 0x3E9 frames inspected               */
+    uint32_t frames_modified;  /**< ... of which we rewrote              */
+    uint32_t bad_dlc;          /**< 0x3E9 with unexpected length (untouched) */
+    uint8_t  last_oem_speed;   /**< speed the car asked for, last frame  */
+    uint8_t  last_out_speed;   /**< speed we put on the bus, last frame  */
+} wiper_logic_stats_t;
 
-/**
- * @brief  Initialise wiper logic state.
- */
+/** @brief  Load the policy config from config.h and reset state. */
 esp_err_t wiper_logic_init(void);
 
 /**
- * @brief  Called by the CAN gateway for every frame received from the car.
- *
- * If msg->identifier == WIPER_CAN_MSG_ID the function reads the current
- * rain intensity and may overwrite bytes inside msg->data[] before the
- * frame is forwarded.  All other frames are left untouched.
- *
- * @param[in,out] msg  CAN frame to inspect / modify in-place.
+ * @brief  Inspect / modify one car→actuator frame in place.
+ *         Frames that aren't a full-length 0x3E9 are left alone.
+ *         Only called from the single car→actuator task (not reentrant).
  */
 void wiper_logic_process_can_frame(twai_message_t *msg);
 
-/**
- * @brief  Optional background FreeRTOS task for time-based logic
- *         (hysteresis, fade-out timers, etc.).
- */
-void wiper_logic_task(void *arg);
+/** @brief  Snapshot of counters for the health log. */
+void wiper_logic_get_stats(wiper_logic_stats_t *out);

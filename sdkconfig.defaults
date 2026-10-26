@@ -1,2 +1,24 @@
-CONFIG_LOG_DEFAULT_LEVEL_VERBOSE=y
-CONFIG_LOG_MAXIMUM_LEVEL_VERBOSE=y
+# Shared defaults for every target (esp32c6 production, esp32p4 bench).
+# Per-target overrides go in sdkconfig.defaults.<target>.
+
+# 1 kHz tick: LIN slot timeouts are a few ms; at the default 100 Hz they
+# round up to 10 ms granularity.
+CONFIG_FREERTOS_HZ=1000
+
+# Compile in everything up to DEBUG so APP_LOG_LEVEL (config.h) can raise
+# verbosity on the bench without a menuconfig change.  Default runtime level
+# stays INFO.
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+
+# Task watchdog guards the CAN forwarding tasks (they register themselves).
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=3
+CONFIG_ESP_TASK_WDT_PANIC=y
+
+# Reboot (instead of halting) on panic - in the car, a reset beats a hang.
+CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
+
+# TWAI ISR in IRAM so flash operations can't delay frame handling.
+CONFIG_TWAI_ISR_IN_IRAM=y

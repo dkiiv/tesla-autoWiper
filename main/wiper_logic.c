@@ -1,97 +1,90 @@
 /**
  * @file wiper_logic.c
- * @brief Rain-sensor-driven wiper control - implementation.
+ * @brief Glue: sensor reading + policy decision → in-place 0x3E9 rewrite.
  */
 
 #include "wiper_logic.h"
+#include "wiper_policy.h"
+#include "protocol.h"
 #include "lin_sensor.h"
 #include "config.h"
 
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "esp_log.h"
 
 static const char *TAG = "WIPER";
 
-/* ─── Internal state ────────────────────────────────────────────────────── */
+/* Compile-time guards: config.h and protocol.h must agree. */
+_Static_assert(WIPER_CAN_MSG_ID == TESLA_BODYCTRL_CAN_ID, "WIPER_CAN_MSG_ID must be 0x3E9");
+_Static_assert(WIPER_CAN_MSG_LEN == TESLA_BODYCTRL_LEN,   "DAS_bodyControls is 8 bytes");
 
-static uint8_t s_last_wiper_speed = 0;   /* 0-15, last value written to bus */
-
-/* ─── CAN frame encoding ────────────────────────────────────────────────── */
-
-/**
- * @brief  Compute the Tesla CAN checksum for DAS_bodyControls.
- *
- * DAS_bodyControlsChecksum start_bit = 56 → checksum_byte = 56 / 8 = 7
- * CAN ID 0x3E9 → seed = (0xE9) + (0x03) = 0xEC
- */
-static uint8_t compute_checksum(const uint8_t *data)
-{
-    const uint16_t address       = WIPER_CAN_MSG_ID;
-    const int      checksum_byte = 7;   /* DAS_bodyControlsChecksum start_bit 56 / 8 */
-    const int      msg_len       = 8;
-
-    uint8_t sum = (uint8_t)(address & 0xFF) + (uint8_t)((address >> 8) & 0xFF);
-    for (int i = 0; i < msg_len; i++) {
-        if (i != checksum_byte) {
-            sum += data[i];
-        }
-    }
-    return sum & 0xFF;
-}
-
-/**
- * @brief  Write wiper speed, and checksum into the CAN frame.
- *
- * Signal layout from DBC:
- *
- *   DAS_wiperSpeed         : 4|4@1+   → bits [7:4] of byte 0  (upper nibble)
- *   DAS_bodyControlsChecksum: 56|8@1+ → byte 7 (full byte)
- *
- * All signals are little-endian (Intel) unsigned.
- *
- * @param[in,out] data   Pointer to msg->data[0].
- * @param[in]     speed  Target wiper speed, 0-15.
- */
-static void encode_wiper_speed(uint8_t *data, uint8_t speed)
-{
-    // DAS_wiperSpeed: start bit 4, length 4 → upper nibble of byte 0
-    data[0] = (data[0] & 0x0F) | ((speed & 0x0F) << 4);
-
-    // DAS_bodyControlsChecksum: start bit 56, length 8 → byte 7
-    data[7] = compute_checksum(data);
-
-    ESP_LOGD(TAG, "CAN frame encoded: speed=%d checksum=0x%02X",
-             speed, data[7]);
-}
-
-/* ─── Public API ────────────────────────────────────────────────────────── */
+static wiper_policy_t        s_policy;
+static wiper_logic_stats_t   s_stats;
+static portMUX_TYPE          s_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint8_t               s_last_logged_speed = 0xFF;
 
 esp_err_t wiper_logic_init(void)
 {
-    s_last_wiper_speed = 0;
-    ESP_LOGI(TAG, "Wiper logic initialised");
+    const wiper_policy_config_t cfg = {
+        .rain_to_speed = WIPER_RAIN_TO_SPEED_MAP,
+        .fall_hold_ms  = WIPER_FALL_HOLD_MS,
+        .stale_ms      = LIN_STALE_MS,
+    };
+    wiper_policy_init(&s_policy, &cfg);
+    ESP_LOGI(TAG, "Wiper policy ready  fall_hold=%dms  stale=%dms",
+             WIPER_FALL_HOLD_MS, LIN_STALE_MS);
     return ESP_OK;
 }
 
 void wiper_logic_process_can_frame(twai_message_t *msg)
 {
-    /* ── Read latest LIN sensor data ────────────────────────────────── */
+    if (msg->identifier != WIPER_CAN_MSG_ID || msg->extd || msg->rtr) {
+        return;
+    }
+    if (msg->data_length_code != WIPER_CAN_MSG_LEN) {
+        portENTER_CRITICAL(&s_mux);
+        s_stats.bad_dlc++;
+        portEXIT_CRITICAL(&s_mux);
+        return;   /* never rewrite a frame we don't fully understand */
+    }
+
     lin_rain_sensor_data_t sensor;
     lin_sensor_get_latest(&sensor);
 
-    if (!sensor.valid) {
-        // TODO: add other criteria which pass through OEM wiper signal
-        ESP_LOGD(TAG, "No valid LIN data, fwd'ing original");
-        return;
-    }
+    uint32_t now = lin_sensor_now_ms();
+    uint32_t age = sensor.valid ? (now - sensor.timestamp_ms) : UINT32_MAX;
+    uint8_t  oem = tesla_wiper_speed_get(msg->data);
 
-    if (sensor.rain_intensity != s_last_wiper_speed) {
-        ESP_LOGI(TAG, "Wiper speed %d → %d  (rain_intensity=%d)",
-                 s_last_wiper_speed, sensor.rain_intensity, sensor.rain_intensity);
-        s_last_wiper_speed = sensor.rain_intensity;
+    wiper_decision_t d = wiper_policy_step(&s_policy, now, sensor.valid, age,
+                                           sensor.rain_intensity, oem);
+    if (d.modify) {
+        tesla_wiper_speed_set(msg->data, d.speed);
     }
+    uint8_t out = tesla_wiper_speed_get(msg->data);
 
-    /* ── Overwrite speed and checksum in the CAN frame ────── */
-    encode_wiper_speed(msg->data, sensor.rain_intensity);
+    portENTER_CRITICAL(&s_mux);
+    s_stats.frames_seen++;
+    if (d.modify) s_stats.frames_modified++;
+    s_stats.last_oem_speed = oem;
+    s_stats.last_out_speed = out;
+    portEXIT_CRITICAL(&s_mux);
+
+    /* Log transitions only — 0x3E9 arrives many times per second. */
+    if (out != s_last_logged_speed) {
+        ESP_LOGI(TAG, "Wiper speed → %d  (oem=%d rain=%d %s)",
+                 out, oem, sensor.rain_intensity, wiper_decision_reason_str(d.reason));
+        s_last_logged_speed = out;
+    }
+#if DEBUG_WIPER_POLICY
+    ESP_LOGI(TAG, "oem=%d rain=%d age=%lu → out=%d %s", oem, sensor.rain_intensity,
+             (unsigned long)age, out, wiper_decision_reason_str(d.reason));
+#endif
+}
+
+void wiper_logic_get_stats(wiper_logic_stats_t *out)
+{
+    if (out == NULL) return;
+    portENTER_CRITICAL(&s_mux);
+    *out = s_stats;
+    portEXIT_CRITICAL(&s_mux);
 }
