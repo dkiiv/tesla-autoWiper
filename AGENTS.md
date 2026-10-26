@@ -17,9 +17,10 @@ often gets it wrong. This device:
    Autopilot computer's `DAS_bodyControls` frame (ID **0x3E9**). The car-side
    bus is on TWAI0 and the actuator side is on TWAI1. Every frame is forwarded
    in both directions.
-3. For car→actuator 0x3E9 frames only, the wiper policy may raise the
-   `DAS_wiperSpeed` nibble based on rain intensity. When it does, the Tesla
-   checksum is recomputed before the frame is forwarded.
+3. For car→actuator 0x3E9 frames only, the wiper policy **replaces**
+   `DAS_wiperSpeed` with its own decision from the rain sensor, raising or
+   lowering it (including forcing 0 to suppress Tesla's phantom wipes on dry
+   glass). The Tesla checksum is recomputed before the frame is forwarded.
 
 If the sensor is missing or its data is stale, the device falls back to pure
 passthrough and the stock behavior is unchanged.
@@ -43,7 +44,7 @@ passthrough and the stock behavior is unchanged.
 |---|---|
 | Firmware compiles, C6 + P4 | ✅ verified (local native IDF 5.3.2 build, 2026-10-26; CI on every push) |
 | LIN PID / checksum, Tesla checksum, bit packing | ✅ unit-tested against independent reference implementations (opendbc / LIN spec) |
-| Wiper policy logic (map, hysteresis, stale, OEM-wins) | ✅ unit-tested |
+| Wiper policy logic (map, hysteresis, stale, authoritative override) | ✅ unit-tested |
 | C6 pin choice | ❌ untested on hardware |
 | LIN reads from the real sensor (byte map, echo behavior) | ❌ unverified |
 | CAN bitrate (1 Mbit/s set; Tesla likely 500 kbit/s) | ❌ unverified, **must confirm before car install** |
@@ -146,9 +147,13 @@ warnings from `main/`.
    everything. Speed 15 is impossible by construction.
 3. **Only touch 0x3E9**, and within it only byte 0 bits [7:4] and byte 7. The
    counter passes through on purpose.
-4. **The driver and the car win.** The policy never lowers the speed the car
-   asked for. Manual stalk and washer behavior is still unverified (ROADMAP
-   Phase 3).
+4. **The module is authoritative over Tesla's auto-wiper.** While the sensor
+   is healthy, our speed replaces the AP computer's request, both up and
+   down. This is an owner decision and the reason the project exists: Tesla's
+   camera wipes when it shouldn't. Do NOT reintroduce "car wins" or `max()`
+   logic. The **driver** (manual stalk, washer) must still win. It is
+   unverified whether the body controller ignores 0x3E9 in those modes; if it
+   doesn't, detecting them is required (ROADMAP Phase 3.1, issue #13).
 5. This is a safety device on a moving vehicle, and its failure mode is no
    wipers in the rain. When in doubt, choose the fail-safe option.
 

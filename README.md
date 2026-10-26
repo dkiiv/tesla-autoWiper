@@ -48,7 +48,9 @@ VAG rain/light sensor ──LIN──► ESP32 ◄──CAN (TWAI0)── AP com
   - Rain intensity is mapped to a Tesla speed through a lookup table.
   - Speed goes up immediately and only comes down after 3 s, so the wipers
     don't hunt between speeds.
-  - It never sends a slower speed than the car asked for.
+  - **It's authoritative.** While the sensor is healthy, its speed is what
+    goes on the bus, whether that's higher or lower than Tesla's request. A
+    phantom wipe on dry glass is forced to OFF.
   - It never sends `15` (`DAS_WIPER_SPEED_INVALID`).
   - It falls back to pure passthrough if the sensor is missing or its reading
     is more than 500 ms old.
@@ -166,7 +168,7 @@ Every 5 s you get three `[HEALTH]` lines:
 ```
 [HEALTH] LIN OK  rain=3 light=120 age=12ms ok/to/cs/echo=1234/0/0/0
 [HEALTH] CAN car→act rx=51234 drop=0 miss=0 off=0 | act→car rx=8812 drop=0 miss=0 off=0
-[HEALTH] WIPER 0x3E9 seen=500 modified=480 badDLC=0 oem=0 out=3
+[HEALTH] WIPER 0x3E9 seen=500 modified=480 badDLC=0 oem=5 out=0
 ```
 
 - **LIN `--`:** no fresh sensor data, so the device is in passthrough.
@@ -175,7 +177,7 @@ Every 5 s you get three `[HEALTH]` lines:
 - **`drop` / `miss` / `off`:** frames lost on TX, frames lost on RX, and
   bus-off events. These should all be 0.
 - **`oem` / `out`:** the wiper speed the car asked for and the speed we
-  actually sent.
+  actually sent. In the example, `oem=5 out=0` is a suppressed phantom wipe.
 
 ---
 

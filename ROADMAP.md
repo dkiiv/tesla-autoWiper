@@ -56,7 +56,11 @@ and later need the bench or the car.
 - [x] **Stale-data timeout:** readings carry a timestamp. If the reading is
       older than `LIN_STALE_MS` (500 ms), the device falls back to passthrough
       and the policy state resets.
-- [x] **The car wins:** the output is `max(oem, ours)`. A frame the car marked
+- [x] **Authoritative (owner decision, 2026-10-26):** while the sensor is
+      healthy, the output is OUR speed, whether that's higher or lower than
+      the car's. Tesla's phantom wipes on dry glass are forced to 0. The car's
+      value is only used when the sensor is missing or stale (fail-safe). A
+      frame the car marked
       SNA (15) is left untouched, and so is a frame whose length isn't 8.
 - [x] **LIN echo handling:** the driver now reads and verifies the echoed
       sync+PID instead of blindly flushing them. It counts timeouts, checksum
@@ -99,9 +103,12 @@ Each step is only safe if the previous one passed.
        0x3E9 traffic: its rate, how the counter behaves, and the checksum.
        Confirm `tesla_checksum` reproduces byte 7 for every frame. If it
        does, add a few real frames to `test/test_main.c` as golden vectors.
-       Record the wiper frames for each manual stalk speed and in auto mode,
-       to learn whether the body controller ignores DAS_wiperSpeed outside
-       auto mode. Save summaries to `docs/captures/`.
+       Record the wiper frames for each manual stalk speed, in auto mode, and
+       during a washer cycle, to learn whether the body controller ignores
+       DAS_wiperSpeed outside auto mode. **This is critical:** the module is
+       authoritative and will force 0 on dry glass, so if the body controller
+       obeys 0x3E9 in manual or washer mode, we must detect those modes (on
+       another CAN ID) and step aside. Save summaries to `docs/captures/`.
 2. [ ] **Pure passthrough soak.** Install the ESP32-C6 inline with the sensor
        unplugged. Drive, and confirm there is zero functional difference, no
        bus errors, and no UI warnings across several ignition cycles. The
@@ -110,7 +117,8 @@ Each step is only safe if the previous one passed.
        gel affect optical rain sensors.
 4. [ ] **First override.** Park and use washer fluid. Confirm the car acts on
        our speed and accepts the recomputed checksum with the passed-through
-       counter. Only then do a road test in real rain.
+       counter. Test both directions: raise (wet sensor, car says 0) and
+       suppress (dry sensor, car requesting a wipe, which should give no wipe). Only then do a road test in real rain.
 5. [ ] **Calibrate** `WIPER_RAIN_TO_SPEED_MAP` and `WIPER_FALL_HOLD_MS`.
        Document what each Tesla speed value (1-14) actually does.
 
@@ -159,5 +167,5 @@ Each step is only safe if the previous one passed.
 | 10 | config.h | CAN bitrate 1 Mbit/s, car is likely 500 kbit/s | ⚠️ open: confirm in Phase 3.1 |
 | 11 | config.h | C6 pins untested | ⚠️ open: bench check on a C6 board |
 | 12 | lin_sensor.c | Assumes the transceiver echoes TX (`LIN_EXPECT_ECHO=1`); a non-echo setup times out | ⚠️ by design, switch in config.h |
-| 13 | wiper_policy | Unknown whether the body controller ignores DAS_wiperSpeed when the stalk isn't in auto | ⚠️ open: Phase 3.1 captures |
+| 13 | wiper_policy | Unknown whether the body controller ignores DAS_wiperSpeed when the stalk isn't in auto. **Higher stakes now that we're authoritative:** if it doesn't ignore it, we could force wipers OFF against a manual stalk setting or a washer cycle | ⚠️ open: Phase 3.1 captures, must answer before road use |
 | 14 | lin_sensor.c | `uart_set_baudrate` mid-frame for the break: timing on the C6 UART is unverified | ⚠️ open: scope it on the bench |
