@@ -5,6 +5,7 @@ FROM espressif/idf:v5.3.2
 # Install a few quality-of-life extras
 RUN apt-get update && apt-get install -y --no-install-recommends \
     usbutils \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Default working directory maps to your project root on the host

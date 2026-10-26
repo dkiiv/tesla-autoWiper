@@ -4,7 +4,9 @@
 # Supports: macOS, Linux, Windows (Git Bash or WSL)
 #
 # Usage:
-#   ./idf.sh build
+#   ./idf.sh build                      # esp32c6 (production)
+#   IDF_TARGET=esp32p4 ./idf.sh build   # bench board
+#   ./idf.sh test                       # host unit tests
 #   ./idf.sh flash
 #   ./idf.sh monitor
 #   ./idf.sh flash monitor
@@ -15,6 +17,11 @@
 #   FLASH_PORT=COM3                    ./idf.sh flash   # Windows
 
 set -euo pipefail
+
+# Optional per-machine settings (FLASH_PORT, IDF_TARGET) — see .env.example
+if [ -f .env ]; then
+  set -a; . ./.env; set +a
+fi
 
 COMPOSE="docker compose"
 BUILD_DIR="/build"   # named volume — keeps build OFF the host filesystem
@@ -123,6 +130,7 @@ copy_firmware() {
       cp /build_vol/*.bin /out/ 2>/dev/null || true
       cp /build_vol/*.elf /out/ 2>/dev/null || true
       cp /build_vol/flasher_args.json /out/ 2>/dev/null || true
+      cp /build_vol/flash_args /out/ 2>/dev/null || true
       cp -r /build_vol/bootloader /out/ 2>/dev/null || true
       cp -r /build_vol/partition_table /out/ 2>/dev/null || true
     "
@@ -146,13 +154,20 @@ ensure_pyserial() {
 
 do_flash() {
   ensure_esptool
-  echo "⚡  Flashing to ${PORT}  [${OS}]..."
+  if [ ! -f firmware/flash_args ]; then
+    echo "❌  firmware/flash_args not found — run ./idf.sh build first."
+    exit 1
+  fi
+  # Chip comes from the build itself, so we can never flash a C6 image onto a
+  # P4 (or vice versa).  Offsets come from flash_args (they differ per chip:
+  # bootloader is at 0x0 on C6, 0x2000 on P4).
+  local chip
+  chip="$(sed -n 's/.*"chip"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' firmware/flasher_args.json | head -1)"
+  echo "⚡  Flashing ${chip:-?} to ${PORT}  [${OS}]..."
   cd firmware
-  $PYTHON -m esptool --chip esp32p4 --port "$PORT" --baud 460800 \
-    write_flash --flash_mode dio --flash_freq 80m --flash_size 2MB \
-    0x2000 bootloader/bootloader.bin \
-    0x8000 partition_table/partition-table.bin \
-    0x10000 wiper_controller.bin
+  $PYTHON -m esptool --chip "${chip:-auto}" --port "$PORT" --baud 460800 \
+    --before default_reset --after hard_reset \
+    write_flash @flash_args
   cd ..
 }
 
@@ -172,7 +187,7 @@ case "$CMD" in
   build)
     ensure_image
     $COMPOSE run --rm idf idf.py -B "$BUILD_DIR" \
-      set-target "${IDF_TARGET:-esp32p4}" \
+      set-target "${IDF_TARGET:-esp32c6}" \
       build
     copy_firmware
     ;;
@@ -188,6 +203,13 @@ case "$CMD" in
   "flash monitor")
     do_flash
     do_monitor
+    ;;
+
+  test)
+    # Host unit tests for protocol.c / wiper_policy.c.  Runs inside the IDF
+    # container (it has gcc + make) so no local compiler is needed.
+    ensure_image
+    $COMPOSE run --rm --entrypoint "" idf make -C test
     ;;
 
   menuconfig)
@@ -249,6 +271,7 @@ Commands:
   flash              Flash the device (runs on host, not in container)
   monitor            Open serial monitor (runs on host)
   flash monitor      Flash then open monitor
+  test               Run host unit tests (protocol + wiper policy)
   menuconfig         Open Kconfig menu (runs inside container)
   clean              Run idf.py fullclean
   firmware           Re-copy built firmware to ./firmware/ without rebuilding
@@ -258,7 +281,7 @@ Commands:
 
 Environment variables:
   FLASH_PORT         Override serial port
-  IDF_TARGET         ESP-IDF target chip (default: esp32p4)
+  IDF_TARGET         ESP-IDF target chip (default: esp32c6; bench board: esp32p4)
 
 Default ports by OS:
   macOS              /dev/tty.usbmodem101   (find yours: ./idf.sh port)

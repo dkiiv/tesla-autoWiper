@@ -16,7 +16,7 @@
       ],
       "settings": {
         // Point the C++ extension at the IDF toolchain inside the container
-        "C_Cpp.default.compilerPath": "/opt/esp/tools/xtensa-esp-elf/esp-13.2.0_20240530/xtensa-esp-elf/bin/xtensa-esp-elf-gcc",
+        "C_Cpp.default.compilerPath": "riscv32-esp-elf-gcc",  // C6 + P4 are both RISC-V
         "C_Cpp.default.includePath": [
           "${workspaceFolder}/**",
           "${IDF_PATH}/components/**"
@@ -36,7 +36,7 @@
 
   // Runs once after the container starts — generates compile_commands.json
   // which gives IntelliSense accurate per-file compiler flags
-  "postStartCommand": "idf.py set-target esp32p4 2>/dev/null; idf.py reconfigure 2>/dev/null || true",
+  "postStartCommand": "idf.py set-target ${IDF_TARGET:-esp32c6} 2>/dev/null; idf.py reconfigure 2>/dev/null || true",
 
   // Mount the serial device for flashing from within VSCode
   "runArgs": []
