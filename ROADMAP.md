@@ -30,8 +30,7 @@ and later need the bench or the car.
       idf.sh, compose and the devcontainer default to `esp32c6`. `flash` reads
       the chip and offsets from the build, because the bootloader offset
       differs between the C6 (0x0) and the P4 (0x2000).
-- [ ] **LICENSE: owner decision needed** (MIT suggested). Not added without
-      the owner's sign-off.
+- [x] LICENSE added (MIT, approved by the owner).
 
 ## Phase 1: Host-side unit tests ✅ DONE (2026-10-26)
 
@@ -156,7 +155,7 @@ Each step is only safe if the previous one passed.
 | 6 | lin_sensor.c | Blind RX flush could eat response | ✅ fixed (read + verify echo) |
 | 7 | can_gateway | Stale comments, polling design | ✅ fixed (per-direction blocking tasks) |
 | 8 | DOCKER_DEV.md | Wrong artifact, missing .env.example | ✅ fixed |
-| 9 | repo root | No LICENSE | ⏳ owner decision |
+| 9 | repo root | No LICENSE | ✅ fixed (MIT) |
 | 10 | config.h | CAN bitrate 1 Mbit/s, car is likely 500 kbit/s | ⚠️ open: confirm in Phase 3.1 |
 | 11 | config.h | C6 pins untested | ⚠️ open: bench check on a C6 board |
 | 12 | lin_sensor.c | Assumes the transceiver echoes TX (`LIN_EXPECT_ECHO=1`); a non-echo setup times out | ⚠️ by design, switch in config.h |

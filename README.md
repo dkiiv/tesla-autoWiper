@@ -144,7 +144,7 @@ CI (GitHub Actions) runs the unit tests and builds both chips on every push.
 
 ```
 tesla-autoWiper/
-├── README.md, AGENTS.md, ROADMAP.md
+├── README.md, AGENTS.md, ROADMAP.md, LICENSE
 ├── CMakeLists.txt, sdkconfig.defaults
 ├── Dockerfile, docker-compose.yml, idf.sh, DOCKER_DEV.md, .env.example
 ├── .github/workflows/ci.yml   ← unit tests + C6/P4 builds
@@ -176,3 +176,9 @@ Every 5 s you get three `[HEALTH]` lines:
   bus-off events. These should all be 0.
 - **`oem` / `out`:** the wiper speed the car asked for and the speed we
   actually sent.
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE).
