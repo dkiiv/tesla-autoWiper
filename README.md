@@ -2,6 +2,9 @@
 
 An ESP project that sits between Tesla's AP-computer and car, using a VAG rain/light sensor over LIN bus to automatically control wiper speed.
 
+> **Status:** work in progress — builds and runs on a bench breadboard; not yet verified in a vehicle.
+> **Picking this up?** Read [`AGENTS.md`](AGENTS.md) for orientation (humans and LLMs alike), then work top-down through [`ROADMAP.md`](ROADMAP.md).
+
 ---
 
 ## Architecture
