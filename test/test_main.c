@@ -414,9 +414,127 @@ static void test_policy_raise_only(void)
 static void test_policy_reason_strings(void)
 {
     puts("wiper_decision_reason_str");
-    for (int r = WIPER_DECISION_PASSTHROUGH_NO_SENSOR; r <= WIPER_DECISION_PASSTHROUGH_RAISE_ONLY; r++) {
+    for (int r = WIPER_DECISION_PASSTHROUGH_NO_SENSOR; r <= WIPER_DECISION_PASSTHROUGH_WARMUP; r++) {
         CHECK_EQ(strcmp(wiper_decision_reason_str((wiper_decision_reason_t)r), "?") != 0, 1);
     }
+}
+
+static wiper_policy_t make_policy_ex(uint32_t rise_hold_ms, uint32_t warmup_ms)
+{
+    wiper_policy_t p = make_policy();
+    p.cfg.rise_hold_ms = rise_hold_ms;
+    p.cfg.warmup_ms    = warmup_ms;
+    return p;
+}
+
+static void test_bodyctrl_helpers(void)
+{
+    puts("tesla_bodyctrl_counter_get / checksum_ok");
+    uint8_t d[8] = {0x51, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC3, 0x01};  /* valid cs is 0x00 */
+    CHECK_EQ(tesla_bodyctrl_counter_get(d), 0xC);
+    CHECK_EQ(tesla_bodyctrl_checksum_ok(d), 0);
+    d[7] = ref_tesla_cs(0x3E9, d, 8, 7);
+    CHECK_EQ(tesla_bodyctrl_checksum_ok(d), 1);
+    d[3] ^= 0x01;                                   /* corrupt one bit */
+    CHECK_EQ(tesla_bodyctrl_checksum_ok(d), 0);
+    tesla_wiper_speed_set(d, 7);                    /* set always leaves it valid */
+    CHECK_EQ(tesla_bodyctrl_checksum_ok(d), 1);
+}
+
+static void test_policy_warmup(void)
+{
+    puts("wiper_policy: warm-up before taking authority");
+    wiper_policy_t p = make_policy_ex(0, 2000);
+
+    /* Dry sensor, car wants to wipe: hands off until 2 s of healthy data. */
+    wiper_decision_t d = wiper_policy_step(&p, 1000, true, 0, 0, 0, 5);
+    CHECK_EQ(d.modify, 0);
+    CHECK_EQ(d.speed, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_WARMUP);
+    d = wiper_policy_step(&p, 2999, true, 0, 0, 0, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_WARMUP);
+    d = wiper_policy_step(&p, 3000, true, 0, 0, 0, 5);
+    CHECK_EQ(d.modify, 1);
+    CHECK_EQ(d.speed, 0);
+    CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_DOWN);
+
+    /* A dropout restarts the warm-up. */
+    d = wiper_policy_step(&p, 3100, true, 501, 0, 0, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_NO_SENSOR);
+    d = wiper_policy_step(&p, 3200, true, 0, 0, 0, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_WARMUP);
+    d = wiper_policy_step(&p, 5199, true, 0, 0, 0, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_WARMUP);
+    d = wiper_policy_step(&p, 5200, true, 0, 0, 0, 5);
+    CHECK_EQ(d.speed, 0);
+    CHECK_EQ(d.modify, 1);
+
+    /* So does a reported sensor fault. */
+    p.cfg.status_fault_mask = 0x80;
+    d = wiper_policy_step(&p, 5300, true, 0, 0x80, 0, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_SENSOR_FAULT);
+    d = wiper_policy_step(&p, 5400, true, 0, 0x00, 0, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_WARMUP);
+    d = wiper_policy_step(&p, 7400, true, 0, 0x00, 0, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_DOWN);
+
+    /* State keeps tracking rain during warm-up: wet from the start → our
+     * speed is ready the moment warm-up ends. */
+    p = make_policy_ex(0, 2000);
+    wiper_policy_step(&p, 0, true, 0, 0, 6, 0);
+    d = wiper_policy_step(&p, 2000, true, 0, 0, 6, 0);
+    CHECK_EQ(d.speed, 6);
+    CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_UP);
+
+    /* Raise-only still applies after warm-up. */
+    p = make_policy_ex(0, 2000);
+    p.cfg.raise_only = true;
+    wiper_policy_step(&p, 0, true, 0, 0, 0, 5);
+    d = wiper_policy_step(&p, 2000, true, 0, 0, 0, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_RAISE_ONLY);
+    CHECK_EQ(d.modify, 0);
+}
+
+static void test_policy_rise_debounce(void)
+{
+    puts("wiper_policy: debounced rise");
+    wiper_policy_t p = make_policy_ex(100, 0);
+
+    wiper_decision_t d = wiper_policy_step(&p, 0, true, 0, 0, 0, 0);
+    CHECK_EQ(d.speed, 0);
+
+    /* One glitched reading of 15 for 50 ms, then dry again → never wipes. */
+    d = wiper_policy_step(&p, 10, true, 0, 0, 15, 0);
+    CHECK_EQ(d.speed, 0);
+    d = wiper_policy_step(&p, 60, true, 0, 0, 0, 0);
+    CHECK_EQ(d.speed, 0);
+    CHECK_EQ(p.rise_pending, 0);
+    d = wiper_policy_step(&p, 200, true, 0, 0, 0, 0);
+    CHECK_EQ(d.speed, 0);
+
+    /* Sustained rain rises after the hold, to the lowest level seen in it. */
+    d = wiper_policy_step(&p, 1000, true, 0, 0, 9, 0);
+    CHECK_EQ(d.speed, 0);
+    d = wiper_policy_step(&p, 1050, true, 0, 0, 6, 0);
+    CHECK_EQ(d.speed, 0);
+    d = wiper_policy_step(&p, 1100, true, 0, 0, 9, 0);
+    CHECK_EQ(d.speed, 6);
+    CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_UP);
+    d = wiper_policy_step(&p, 1150, true, 0, 0, 9, 0);   /* new rise window 6 → 9 */
+    CHECK_EQ(d.speed, 6);
+    d = wiper_policy_step(&p, 1250, true, 0, 0, 9, 0);
+    CHECK_EQ(d.speed, 9);
+
+    /* A higher reading during a pending fall cancels the fall but is itself
+     * debounced; the speed never dips below what we were holding. */
+    d = wiper_policy_step(&p, 1300, true, 0, 0, 2, 0);
+    CHECK_EQ(d.speed, 9);
+    CHECK_EQ(p.fall_pending, 1);
+    d = wiper_policy_step(&p, 1350, true, 0, 0, 12, 0);
+    CHECK_EQ(d.speed, 9);
+    CHECK_EQ(p.fall_pending, 0);
+    d = wiper_policy_step(&p, 1450, true, 0, 0, 12, 0);
+    CHECK_EQ(d.speed, 12);
 }
 
 static void test_policy_time_wrap(void)
@@ -444,6 +562,9 @@ int main(void)
     test_policy_status_mask();
     test_policy_raise_only();
     test_policy_reason_strings();
+    test_bodyctrl_helpers();
+    test_policy_warmup();
+    test_policy_rise_debounce();
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

@@ -45,6 +45,18 @@ uint8_t tesla_wiper_speed_get(const uint8_t *data)
     return (uint8_t)((data[0] >> 4) & 0x0F);
 }
 
+uint8_t tesla_bodyctrl_counter_get(const uint8_t *data)
+{
+    return (uint8_t)((data[6] >> 4) & 0x0F);
+}
+
+bool tesla_bodyctrl_checksum_ok(const uint8_t *data)
+{
+    return data[TESLA_BODYCTRL_CHECKSUM_BYTE] ==
+           tesla_checksum(TESLA_BODYCTRL_CAN_ID, data, TESLA_BODYCTRL_LEN,
+                          TESLA_BODYCTRL_CHECKSUM_BYTE);
+}
+
 void tesla_wiper_speed_set(uint8_t *data, uint8_t speed)
 {
     if (speed > TESLA_WIPER_SPEED_MAX_VALID) {

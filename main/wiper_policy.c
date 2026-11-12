@@ -24,6 +24,9 @@ static void reset_state(wiper_policy_t *p)
     p->current      = TESLA_WIPER_SPEED_OFF;
     p->fall_pending = false;
     p->fall_max     = 0;
+    p->rise_pending = false;
+    p->rise_min     = 0;
+    p->healthy      = false;   /* any dropout or fault restarts the warm-up */
 }
 
 wiper_decision_t wiper_policy_step(wiper_policy_t *p, uint32_t now_ms,
@@ -46,25 +49,57 @@ wiper_decision_t wiper_policy_step(wiper_policy_t *p, uint32_t now_ms,
         return d;
     }
 
-    /* 3. Map. (Step 2 is checked after hysteresis so state keeps tracking rain.) */
+    if (!p->healthy) {
+        p->healthy          = true;
+        p->healthy_since_ms = now_ms;
+    }
+
+    /* 3. Map. (Steps 1c and 2 are checked after hysteresis so the state keeps
+     *    tracking the rain while we are not allowed to act on it.) */
     uint8_t target = p->cfg.rain_to_speed[rain_intensity & 0x0F];
 
-    /* 4. Hysteresis: rise fast, fall slow. */
-    if (target >= p->current) {
-        p->current      = target;
+    /* 4. Hysteresis: debounced rise, slow fall. */
+    if (target == p->current) {
         p->fall_pending = false;
-    } else if (!p->fall_pending) {
-        p->fall_pending  = true;
-        p->fall_since_ms = now_ms;
-        p->fall_max      = target;
+        p->rise_pending = false;
+    } else if (target > p->current) {
+        p->fall_pending = false;
+        if (p->cfg.rise_hold_ms == 0) {
+            p->current = target;
+        } else if (!p->rise_pending) {
+            p->rise_pending  = true;
+            p->rise_since_ms = now_ms;
+            p->rise_min      = target;
+        } else {
+            if (target < p->rise_min) {
+                p->rise_min = target;
+            }
+            if ((uint32_t)(now_ms - p->rise_since_ms) >= p->cfg.rise_hold_ms) {
+                p->current      = p->rise_min;
+                p->rise_pending = false;
+            }
+        }
     } else {
-        if (target > p->fall_max) {
-            p->fall_max = target;
+        p->rise_pending = false;
+        if (!p->fall_pending) {
+            p->fall_pending  = true;
+            p->fall_since_ms = now_ms;
+            p->fall_max      = target;
+        } else {
+            if (target > p->fall_max) {
+                p->fall_max = target;
+            }
+            if ((uint32_t)(now_ms - p->fall_since_ms) >= p->cfg.fall_hold_ms) {
+                p->current      = p->fall_max;
+                p->fall_pending = false;
+            }
         }
-        if ((uint32_t)(now_ms - p->fall_since_ms) >= p->cfg.fall_hold_ms) {
-            p->current      = p->fall_max;
-            p->fall_pending = false;
-        }
+    }
+
+    /* 1c. Sensor hasn't been healthy long enough to overrule the car. */
+    if ((uint32_t)(now_ms - p->healthy_since_ms) < p->cfg.warmup_ms) {
+        d.reason = WIPER_DECISION_PASSTHROUGH_WARMUP;
+        return d;
     }
 
     /* 2. Car marked its own request invalid → don't touch the frame. */
@@ -102,6 +137,7 @@ const char *wiper_decision_reason_str(wiper_decision_reason_t r)
     case WIPER_DECISION_OVERRIDE_DOWN:         return "override(down)";
     case WIPER_DECISION_PASSTHROUGH_SENSOR_FAULT: return "passthrough(sensor fault)";
     case WIPER_DECISION_PASSTHROUGH_RAISE_ONLY:   return "passthrough(raise-only)";
+    case WIPER_DECISION_PASSTHROUGH_WARMUP:       return "passthrough(warm-up)";
     }
     return "?";
 }
