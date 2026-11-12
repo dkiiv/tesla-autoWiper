@@ -155,6 +155,9 @@ esp_err_t lin_sensor_poll(lin_rain_sensor_data_t *out)
     }
 
     s_stats.ok++;
+    if (data[2] & LIN_SENSOR_FAULT_MASK) {
+        s_stats.status_fault++;   /* still stored: the policy decides (passthrough) */
+    }
     if (out) {
         memcpy(out->raw, data, LIN_RAIN_SENSOR_DATA_LEN);
         out->rain_intensity  = data[0] & 0x0F;

@@ -28,6 +28,7 @@ static void reset_state(wiper_policy_t *p)
 
 wiper_decision_t wiper_policy_step(wiper_policy_t *p, uint32_t now_ms,
                                    bool sensor_valid, uint32_t sensor_age_ms,
+                                   uint8_t sensor_status,
                                    uint8_t rain_intensity, uint8_t oem_speed)
 {
     wiper_decision_t d = { .speed = oem_speed, .modify = false };
@@ -36,6 +37,12 @@ wiper_decision_t wiper_policy_step(wiper_policy_t *p, uint32_t now_ms,
     if (!sensor_valid || sensor_age_ms > p->cfg.stale_ms) {
         reset_state(p);
         d.reason = WIPER_DECISION_PASSTHROUGH_NO_SENSOR;
+        return d;
+    }
+    /* 1b. Sensor reports a fault / init state → same as no sensor. */
+    if ((sensor_status & p->cfg.status_fault_mask) != 0) {
+        reset_state(p);
+        d.reason = WIPER_DECISION_PASSTHROUGH_SENSOR_FAULT;
         return d;
     }
 
@@ -66,6 +73,12 @@ wiper_decision_t wiper_policy_step(wiper_policy_t *p, uint32_t now_ms,
         return d;
     }
 
+    /* 5a. Raise-only mode: never lower what the car asked for. */
+    if (p->cfg.raise_only && p->current < oem_speed) {
+        d.reason = WIPER_DECISION_PASSTHROUGH_RAISE_ONLY;
+        return d;
+    }
+
     /* 5. Authoritative: our speed goes on the bus, higher or lower. */
     d.speed = p->current;
     if (oem_speed == p->current) {
@@ -87,6 +100,8 @@ const char *wiper_decision_reason_str(wiper_decision_reason_t r)
     case WIPER_DECISION_AGREE:                 return "agree";
     case WIPER_DECISION_OVERRIDE_UP:           return "override(up)";
     case WIPER_DECISION_OVERRIDE_DOWN:         return "override(down)";
+    case WIPER_DECISION_PASSTHROUGH_SENSOR_FAULT: return "passthrough(sensor fault)";
+    case WIPER_DECISION_PASSTHROUGH_RAISE_ONLY:   return "passthrough(raise-only)";
     }
     return "?";
 }

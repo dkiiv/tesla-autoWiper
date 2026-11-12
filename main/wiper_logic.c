@@ -29,10 +29,14 @@ esp_err_t wiper_logic_init(void)
         .rain_to_speed = WIPER_RAIN_TO_SPEED_MAP,
         .fall_hold_ms  = WIPER_FALL_HOLD_MS,
         .stale_ms      = LIN_STALE_MS,
+        .status_fault_mask = LIN_SENSOR_FAULT_MASK,
+        .raise_only    = !WIPER_ALLOW_OVERRIDE_DOWN,
     };
     wiper_policy_init(&s_policy, &cfg);
-    ESP_LOGI(TAG, "Wiper policy ready  fall_hold=%dms  stale=%dms",
-             WIPER_FALL_HOLD_MS, LIN_STALE_MS);
+    ESP_LOGI(TAG, "Wiper policy ready  fall_hold=%dms  stale=%dms  mode=%s  fault_mask=0x%02X",
+             WIPER_FALL_HOLD_MS, LIN_STALE_MS,
+             WIPER_ALLOW_OVERRIDE_DOWN ? "authoritative" : "raise-only",
+             LIN_SENSOR_FAULT_MASK);
     return ESP_OK;
 }
 
@@ -56,7 +60,7 @@ void wiper_logic_process_can_frame(twai_message_t *msg)
     uint8_t  oem = tesla_wiper_speed_get(msg->data);
 
     wiper_decision_t d = wiper_policy_step(&s_policy, now, sensor.valid, age,
-                                           sensor.rain_intensity, oem);
+                                           sensor.status, sensor.rain_intensity, oem);
     if (d.modify) {
         tesla_wiper_speed_set(msg->data, d.speed);
     }
@@ -65,6 +69,7 @@ void wiper_logic_process_can_frame(twai_message_t *msg)
     portENTER_CRITICAL(&s_mux);
     s_stats.frames_seen++;
     if (d.modify) s_stats.frames_modified++;
+    if (d.reason == WIPER_DECISION_PASSTHROUGH_SENSOR_FAULT) s_stats.sensor_fault++;
     s_stats.last_oem_speed = oem;
     s_stats.last_out_speed = out;
     portEXIT_CRITICAL(&s_mux);

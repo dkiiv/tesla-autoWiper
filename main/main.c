@@ -64,10 +64,12 @@ static void health_task(void *arg)
         uint32_t age = s.valid ? lin_sensor_now_ms() - s.timestamp_ms : 0;
         bool fresh = s.valid && age <= LIN_STALE_MS;
 
-        ESP_LOGI(TAG, "[HEALTH] LIN %s rain=%d light=%d age=%lums ok/to/cs/echo=%lu/%lu/%lu/%lu",
-                 fresh ? "OK " : "-- ", s.rain_intensity, s.light_intensity,
+        ESP_LOGI(TAG, "[HEALTH] LIN %s rain=%d light=%d st=0x%02X age=%lums "
+                 "ok/to/cs/echo/flt=%lu/%lu/%lu/%lu/%lu",
+                 fresh ? "OK " : "-- ", s.rain_intensity, s.light_intensity, s.status,
                  (unsigned long)age, (unsigned long)ls.ok, (unsigned long)ls.timeout,
-                 (unsigned long)ls.bad_checksum, (unsigned long)ls.bad_echo);
+                 (unsigned long)ls.bad_checksum, (unsigned long)ls.bad_echo,
+                 (unsigned long)ls.status_fault);
         ESP_LOGI(TAG, "[HEALTH] CAN car→act rx=%lu drop=%lu miss=%lu off=%lu | "
                  "act→car rx=%lu drop=%lu miss=%lu off=%lu",
                  (unsigned long)cs.car_to_act.rx, (unsigned long)cs.car_to_act.tx_drop,
@@ -76,9 +78,12 @@ static void health_task(void *arg)
                  (unsigned long)cs.act_to_car.rx, (unsigned long)cs.act_to_car.tx_drop,
                  (unsigned long)(cs.act_to_car.rx_missed + cs.act_to_car.rx_overrun),
                  (unsigned long)cs.act_to_car.bus_off);
-        ESP_LOGI(TAG, "[HEALTH] WIPER 0x3E9 seen=%lu modified=%lu badDLC=%lu oem=%d out=%d",
+        ESP_LOGI(TAG, "[HEALTH] WIPER 0x3E9 seen=%lu modified=%lu badDLC=%lu fault=%lu "
+                 "oem=%d out=%d mode=%s",
                  (unsigned long)ws.frames_seen, (unsigned long)ws.frames_modified,
-                 (unsigned long)ws.bad_dlc, ws.last_oem_speed, ws.last_out_speed);
+                 (unsigned long)ws.bad_dlc, (unsigned long)ws.sensor_fault,
+                 ws.last_oem_speed, ws.last_out_speed,
+                 WIPER_ALLOW_OVERRIDE_DOWN ? "auth" : "raise");
     }
 }
 

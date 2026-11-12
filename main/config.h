@@ -151,6 +151,34 @@
 /* A LIN reading older than this is treated as "no sensor" → passthrough. */
 #define LIN_STALE_MS            500
 
+/*
+ * Sensor status gating.  A reading whose status byte (byte 2) has any of
+ * these bits set is treated as "no sensor" → passthrough, and is counted
+ * (`flt=` / `fault=` in the [HEALTH] log).
+ *
+ * 0x00 = DISABLED, the default, because the meaning of the VAG status bits
+ * is UNVERIFIED.  Record byte 2 at power-up, in normal operation and with the
+ * sensor lifted off the glass (docs/bench-bringup.md, stage 2), then set the
+ * bits that mean "fault / initialising".  Do not guess: a wrong mask either
+ * does nothing or disables the module in normal use.
+ */
+#define LIN_SENSOR_FAULT_MASK   0x00
+
+/*
+ * 1 = AUTHORITATIVE (owner decision, the default): our speed replaces the AP
+ *     computer's request both up AND down, so phantom wipes on dry glass are
+ *     forced off.
+ * 0 = RAISE-ONLY: we may raise the AP computer's speed but never lower it.
+ *     The device can add wipes but can never remove one Tesla asked for.
+ *
+ * RECOMMENDED: 0 for the first road tests, until ROADMAP Phase 3.1 has
+ * captured manual-stalk and washer behaviour (known issue #13) and Phase 3.3
+ * has shown the sensor reads rain through Tesla glass.  In raise-only mode a
+ * sensor that wrongly reads "dry" (bad optical coupling) cannot switch the
+ * wipers off in real rain.
+ */
+#define WIPER_ALLOW_OVERRIDE_DOWN   1
+
 /* ─── FreeRTOS task priorities & stack sizes ────────────────────────────── */
 
 /*

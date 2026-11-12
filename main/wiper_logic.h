@@ -25,6 +25,7 @@ typedef struct {
     uint32_t frames_seen;      /**< 0x3E9 frames inspected               */
     uint32_t frames_modified;  /**< ... of which we rewrote              */
     uint32_t bad_dlc;          /**< 0x3E9 with unexpected length (untouched) */
+    uint32_t sensor_fault;     /**< 0x3E9 passed through: status hit LIN_SENSOR_FAULT_MASK */
     uint8_t  last_oem_speed;   /**< speed the car asked for, last frame  */
     uint8_t  last_out_speed;   /**< speed we put on the bus, last frame  */
 } wiper_logic_stats_t;
