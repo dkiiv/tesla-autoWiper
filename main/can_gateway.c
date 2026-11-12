@@ -23,6 +23,11 @@ static const char *TAG = "CAN_GW";
 #define FWD_RX_WAIT_MS     1000
 /* How long we wait for space in the destination TX queue before dropping. */
 #define FWD_TX_WAIT_MS     2
+/*
+ * How long the alert task waits on each controller's alerts.  One loop is
+ * 2 × this (~100 ms) between watchdog feeds — far under the 3 s timeout.
+ */
+#define ALERT_WAIT_MS      50
 
 /* ─── State ─────────────────────────────────────────────────────────────── */
 
@@ -141,7 +146,7 @@ static void can_fwd_task(void *arg)
 static void handle_alerts(fwd_dir_t *dir, int ctrl)
 {
     uint32_t alerts = 0;
-    if (twai_read_alerts_v2(dir->src, &alerts, pdMS_TO_TICKS(50)) != ESP_OK || alerts == 0) {
+    if (twai_read_alerts_v2(dir->src, &alerts, pdMS_TO_TICKS(ALERT_WAIT_MS)) != ESP_OK || alerts == 0) {
         return;
     }
     if (alerts & TWAI_ALERT_ERR_PASS)        ESP_LOGW(TAG, "TWAI%d error-passive", ctrl);
@@ -160,9 +165,16 @@ static void handle_alerts(fwd_dir_t *dir, int ctrl)
     }
 }
 
+/*
+ * Watchdog-registered like the forwarding tasks: if this task hangs, bus-off
+ * recovery silently stops and one direction stays dead, so a hang must
+ * reboot the chip instead.
+ */
 static void can_alert_task(void *arg)
 {
+    ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
     while (1) {
+        esp_task_wdt_reset();
         handle_alerts(&s_dir[0], 0);
         handle_alerts(&s_dir[1], 1);
     }

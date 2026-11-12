@@ -11,10 +11,10 @@
  *
  * Each forwarding task blocks on its own RX queue, so there is no polling
  * loop or sleep to tune, and one direction stalling can't starve the other.
- * Both forwarding tasks are registered with the task watchdog: if either
- * wedges, the chip resets (and the stock passthrough path comes back after
- * boot — see ROADMAP Phase 4 for the hardware fail-safe that covers the
- * reset window itself).
+ * All three tasks are registered with the task watchdog: if any of them
+ * wedges, the chip resets and forwarding resumes after boot.  During the
+ * reset and boot window NO frames pass at all; only the hardware bypass in
+ * ROADMAP Phase 4 can cover that window.
  */
 
 #pragma once
