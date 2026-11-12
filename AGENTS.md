@@ -42,12 +42,15 @@ passthrough and the stock behavior is unchanged.
 
 | Area | State |
 |---|---|
-| Firmware compiles, C6 + P4 | ✅ verified (local native IDF 5.3.2 build, 2026-10-26; CI on every push) |
+| Firmware compiles, C6 + P4 | ✅ verified (local native IDF 5.3.2 build, 2026-11-12, at `CAN_BITRATE_KBPS=500`; CI on every push) |
 | LIN PID / checksum, Tesla checksum, bit packing | ✅ unit-tested against independent reference implementations (opendbc / LIN spec) |
-| Wiper policy logic (map, hysteresis, stale, authoritative override) | ✅ unit-tested |
+| Wiper policy logic (map, hysteresis, stale, authoritative override, status fault mask, raise-only mode) | ✅ unit-tested |
+| Alert task on task watchdog, LIN counters under mutex | ✅ compiles; ❌ untested on hardware |
 | C6 pin choice | ❌ untested on hardware |
 | LIN reads from the real sensor (byte map, echo behavior) | ❌ unverified |
-| CAN bitrate (1 Mbit/s set; Tesla likely 500 kbit/s) | ❌ unverified, **must confirm before car install** |
+| CAN bitrate (no default; build requires `CAN_BITRATE_KBPS`; Tesla likely 500 kbit/s) | ❌ car rate unverified, **must measure before car install** |
+| VAG status byte bits (`LIN_SENSOR_FAULT_MASK`, shipped 0x00 = disabled) | ❌ unverified |
+| Hardware design (power, termination, bypass): docs/hardware.md | ❌ requirements only, nothing built or measured |
 | In-car passthrough / override acceptance / speed meaning | ❌ unverified |
 
 Rules for agents:
@@ -63,11 +66,13 @@ Rules for agents:
 
 ```
 main/
-  config.h          ALL tunables: per-chip pins, CAN bitrate/queues, LIN settings,
-                    wiper map + hysteresis, task priorities, debug switches.
+  config.h          ALL tunables: per-chip pins, CAN bitrate (no default)/queues,
+                    LIN settings, wiper map + hysteresis, status fault mask,
+                    raise-only switch, task priorities, debug switches.
   main.c            app_main: init order, task spawn, [HEALTH] log (3 lines / 5 s)
   can_gateway.c/.h  Two forwarding tasks (one per direction, blocking RX, watchdog-fed)
-                    + one alert task for bus-off recovery. Counters for health log.
+                    + one alert task for bus-off recovery (also watchdog-fed).
+                    Counters for health log.
   lin_sensor.c/.h   LIN master: break via baud-halving, reads + verifies header echo,
                     enhanced checksum, timestamped latest reading, poll counters.
   wiper_logic.c/.h  Glue: for 0x3E9 → get sensor + age → wiper_policy_step → rewrite.
@@ -75,6 +80,8 @@ main/
   protocol.c/.h     PURE C. LIN PID/checksum, Tesla checksum, DAS_wiperSpeed get/set
                     (set clamps to 14). Host-tested.
 test/               Plain-C test runner + Makefile. No ESP-IDF. `make -C test`.
+docs/hardware.md    Wiring requirements, BOM, TODO-to-measure sensor/harness tables.
+docs/bench-bringup.md  Bench procedure + pre-install checklist that gates the car.
 .github/workflows/ci.yml   host tests + build matrix [esp32c6, esp32p4]
 idf.sh, Dockerfile, docker-compose.yml   containerized build; flash/monitor on host
 ```
@@ -90,8 +97,8 @@ can be pure goes there, with tests. Driver code stays thin.
 ## Build / flash / test
 
 ```bash
-./idf.sh build                       # esp32c6 → ./firmware/
-IDF_TARGET=esp32p4 ./idf.sh build    # bench board
+CAN_BITRATE_KBPS=500 ./idf.sh build                      # esp32c6 → ./firmware/
+CAN_BITRATE_KBPS=500 IDF_TARGET=esp32p4 ./idf.sh build   # bench board
 ./idf.sh flash                       # chip + offsets read from build output
 ./idf.sh monitor
 ./idf.sh test                        # host unit tests in the container
@@ -99,7 +106,8 @@ make -C test                         # same, if you have cc + make locally
 ```
 
 Native (no Docker): ESP-IDF **v5.3.2** with **Python ≤ 3.12**, since IDF 5.3
-rejects 3.13+. Run `idf.py -B build-c6 set-target esp32c6 build`.
+rejects 3.13+. Run `idf.py -B build-c6 -DCAN_BITRATE_KBPS=500 set-target esp32c6 build`.
+There is no default bitrate on purpose (the build `#error`s); never add one.
 
 The minimum bar for every commit: tests pass, and both targets build with zero
 warnings from `main/`.
@@ -154,6 +162,9 @@ warnings from `main/`.
    logic. The **driver** (manual stalk, washer) must still win. It is
    unverified whether the body controller ignores 0x3E9 in those modes; if it
    doesn't, detecting them is required (ROADMAP Phase 3.1, issue #13).
+   `WIPER_ALLOW_OVERRIDE_DOWN 0` (raise-only) exists as an opt-in for first
+   road tests; the default stays authoritative. Don't flip the default
+   without the owner.
 5. This is a safety device on a moving vehicle, and its failure mode is no
    wipers in the rain. When in doubt, choose the fail-safe option.
 
