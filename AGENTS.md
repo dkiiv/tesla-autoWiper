@@ -42,7 +42,7 @@ passthrough and the stock behavior is unchanged.
 
 | Area | State |
 |---|---|
-| Firmware compiles, C6 + P4 | ✅ verified up to commit 3bed3f9 (local native IDF 5.3.2 build, 2026-11-12, at `CAN_BITRATE_KBPS=500`; CI on every push). ⚠️ The second-batch commits after it (sniffer, warm-up, debounce, log queue, LIN timing) were only checked against stub headers until CI builds them |
+| Firmware compiles, C6 + P4 | ✅ verified (local native IDF 5.3.2 build at 3bed3f9; CI IDF 5.3.2 build of c6/p4 × gateway/sniffer at 327de85, 2026-11-12, `CAN_BITRATE_KBPS=500`, zero warnings from `main/`; CI on every push) |
 | LIN PID / checksum, Tesla checksum, bit packing | ✅ unit-tested against independent reference implementations (opendbc / LIN spec) |
 | Wiper policy logic (map, hysteresis, stale, authoritative override, status fault mask, raise-only mode) | ✅ unit-tested |
 | Alert task on task watchdog, LIN counters under mutex | ✅ compiles; ❌ untested on hardware |
