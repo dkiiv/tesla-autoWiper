@@ -55,8 +55,11 @@ static const char *TAG = "LIN";
 static lin_rain_sensor_data_t s_latest = { 0 };
 static lin_sensor_stats_t     s_stats  = { 0 };
 
-/* Held only while copying structs between tasks. */
+/* Held only while copying structs between tasks or bumping a counter. */
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
+
+/* Same pattern as can_gateway.c: every s_stats write happens under s_mux. */
+#define STAT_INC(field)  do { portENTER_CRITICAL(&s_mux); s_stats.field++; portEXIT_CRITICAL(&s_mux); } while (0)
 
 uint32_t lin_sensor_now_ms(void)
 {
@@ -131,14 +134,14 @@ esp_err_t lin_sensor_poll(lin_rain_sensor_data_t *out)
     int got = uart_read_bytes(LIN_UART_NUM, buf, read_len, pdMS_TO_TICKS(timeout_ms));
 
     if (got < read_len) {
-        s_stats.timeout++;
+        STAT_INC(timeout);
         ESP_LOGD(TAG, "Timeout - got %d of %d bytes", got, read_len);
         return ESP_ERR_TIMEOUT;
     }
 
 #if LIN_EXPECT_ECHO
     if (buf[0] != 0x55 || buf[1] != pid) {
-        s_stats.bad_echo++;
+        STAT_INC(bad_echo);
         ESP_LOGD(TAG, "Bad echo %02X %02X (expected 55 %02X)", buf[0], buf[1], pid);
         return ESP_ERR_INVALID_RESPONSE;
     }
@@ -148,15 +151,15 @@ esp_err_t lin_sensor_poll(lin_rain_sensor_data_t *out)
     uint8_t expected_cs = lin_calc_checksum_enhanced(pid, data, LIN_RAIN_SENSOR_DATA_LEN);
     uint8_t received_cs = data[LIN_RAIN_SENSOR_DATA_LEN];
     if (received_cs != expected_cs) {
-        s_stats.bad_checksum++;
+        STAT_INC(bad_checksum);
         ESP_LOGD(TAG, "Checksum mismatch  got=0x%02X  expected=0x%02X",
                  received_cs, expected_cs);
         return ESP_ERR_INVALID_CRC;
     }
 
-    s_stats.ok++;
+    STAT_INC(ok);
     if (data[2] & LIN_SENSOR_FAULT_MASK) {
-        s_stats.status_fault++;   /* still stored: the policy decides (passthrough) */
+        STAT_INC(status_fault);   /* still stored: the policy decides (passthrough) */
     }
     if (out) {
         memcpy(out->raw, data, LIN_RAIN_SENSOR_DATA_LEN);
