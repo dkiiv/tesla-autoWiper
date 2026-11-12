@@ -19,6 +19,7 @@
 
 #include "esp_err.h"
 #include "driver/twai.h"
+#include "wiper_policy.h"
 #include <stdint.h>
 
 typedef struct {
@@ -28,6 +29,8 @@ typedef struct {
     uint32_t sensor_fault;     /**< 0x3E9 passed through: status hit LIN_SENSOR_FAULT_MASK */
     uint8_t  last_oem_speed;   /**< speed the car asked for, last frame  */
     uint8_t  last_out_speed;   /**< speed we put on the bus, last frame  */
+    wiper_decision_reason_t last_reason;  /**< why, for the last frame   */
+    uint32_t log_dropped;      /**< log events dropped (log queue full)  */
 } wiper_logic_stats_t;
 
 /** @brief  Load the policy config from config.h and reset state. */
@@ -39,6 +42,13 @@ esp_err_t wiper_logic_init(void);
  *         Only called from the single car→actuator task (not reentrant).
  */
 void wiper_logic_process_can_frame(twai_message_t *msg);
+
+/**
+ * @brief  Low-priority FreeRTOS task that prints wiper transitions (and, with
+ *         DEBUG_WIPER_POLICY, every decision).  Keeps console I/O out of the
+ *         CAN forwarding path.  Spawn after wiper_logic_init().
+ */
+void wiper_logic_log_task(void *arg);
 
 /** @brief  Snapshot of counters for the health log. */
 void wiper_logic_get_stats(wiper_logic_stats_t *out);

@@ -20,10 +20,18 @@
  * back onto RX.  Sequence per poll:
  *
  *   1. flush RX                 (drop leftovers from the previous poll)
- *   2. send break, flush RX     (break echo is garbage at the wrong baud)
+ *   2. send break, wait ~1.5 bit times so its echo has fully arrived, then
+ *      restore the baud rate and flush RX (the break echo is not data)
  *   3. send sync 0x55 + PID
  *   4. read  [0x55, PID] echo + DATA_LEN bytes + checksum  in ONE read
  *   5. verify the echo matches, then verify the checksum
+ *
+ * RX timeout
+ * ──────────
+ * The UART driver only moves bytes from the hardware FIFO into its buffer
+ * on "FIFO full" or after the line has been idle for tout_thresh symbols
+ * (default 10 ≈ 5 ms at 19200).  That idle wait alone used up most of the
+ * slot timeout, so init lowers it to LIN_UART_RX_TOUT_SYMBOLS.
  *
  * Reading the echo instead of flushing it (the old approach) means a sensor
  * that answers quickly can't have the start of its reply thrown away, and a
@@ -39,6 +47,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
+#include "esp_rom_sys.h"
 #include "esp_log.h"
 #include <string.h>
 
@@ -49,6 +58,13 @@ static const char *TAG = "LIN";
 #else
 #define ECHO_LEN 0
 #endif
+
+/* Idle symbols before the UART driver hands buffered RX bytes to us. */
+#define LIN_UART_RX_TOUT_SYMBOLS 2
+
+/* Extra time after a break so its echo is complete before we flush (µs).
+ * One bit at 9600 baud is ~104 µs. */
+#define LIN_BREAK_SETTLE_US      160
 
 /* ─── Internal state ────────────────────────────────────────────────────── */
 
@@ -75,6 +91,9 @@ static void lin_send_break(void)
     const uint8_t break_byte = 0x00;
     uart_write_bytes(LIN_UART_NUM, &break_byte, 1);
     uart_wait_tx_done(LIN_UART_NUM, pdMS_TO_TICKS(10));
+    /* TX-done fires at the end of our stop bit; give the transceiver echo a
+     * moment so we don't switch baud / flush while it is still arriving. */
+    esp_rom_delay_us(LIN_BREAK_SETTLE_US);
 
     uart_set_baudrate(LIN_UART_NUM, LIN_BAUD);
     uart_flush_input(LIN_UART_NUM);   /* break echo, read at the wrong baud */
@@ -104,6 +123,7 @@ esp_err_t lin_sensor_init(void)
     if (ret == ESP_OK) ret = uart_param_config(LIN_UART_NUM, &uart_cfg);
     if (ret == ESP_OK) ret = uart_set_pin(LIN_UART_NUM, LIN_TX_PIN, LIN_RX_PIN,
                                           UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    if (ret == ESP_OK) ret = uart_set_rx_timeout(LIN_UART_NUM, LIN_UART_RX_TOUT_SYMBOLS);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "UART init failed: %s", esp_err_to_name(ret));
         return ret;
@@ -127,10 +147,11 @@ esp_err_t lin_sensor_poll(lin_rain_sensor_data_t *out)
 
     /*
      * Slot time: (echo + response) bytes × 10 bits ÷ baud, ×1.4 for the
-     * LIN-spec response tolerance, + 5 ms margin.  Needs a 1 kHz tick to be
-     * meaningful — sdkconfig.defaults sets CONFIG_FREERTOS_HZ=1000.
+     * LIN-spec response tolerance, + 8 ms margin (covers the header still
+     * draining from the TX buffer and the RX idle timeout).  Needs a 1 kHz
+     * tick to be meaningful — sdkconfig.defaults sets CONFIG_FREERTOS_HZ=1000.
      */
-    const int timeout_ms = (read_len * 10 * 1000 * 14) / (LIN_BAUD * 10) + 5;
+    const int timeout_ms = (read_len * 10 * 1000 * 14) / (LIN_BAUD * 10) + 8;
     int got = uart_read_bytes(LIN_UART_NUM, buf, read_len, pdMS_TO_TICKS(timeout_ms));
 
     if (got < read_len) {

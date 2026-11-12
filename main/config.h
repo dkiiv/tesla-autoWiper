@@ -100,6 +100,19 @@
 #error "Unsupported CAN_BITRATE_KBPS: use 125, 250, 500 or 1000 (or add a TWAI_TIMING_CONFIG_* case in config.h)"
 #endif
 
+/*
+ * Sniffer mode (ROADMAP Phase 3.1): both controllers listen-only, nothing is
+ * transmitted (not even ACKs or error frames) and nothing is forwarded;
+ * 0x3E9 frames are checked and logged instead.  Connect IN PARALLEL to the
+ * bus (a T-tap), never inline — inline it would cut the bus.
+ *   SNIFFER=1 CAN_BITRATE_KBPS=500 ./idf.sh build
+ *   idf.py -B build -DCAN_BITRATE_KBPS=500 -DWIPER_SNIFFER=1 ... build
+ * main/CMakeLists.txt turns WIPER_SNIFFER into CAN_LISTEN_ONLY.
+ */
+#ifndef CAN_LISTEN_ONLY
+#define CAN_LISTEN_ONLY         0
+#endif
+
 /* Driver RX/TX queue depth per controller.  Frames, not bytes. */
 #define CAN_RX_QUEUE_LEN        64
 #define CAN_TX_QUEUE_LEN        64
@@ -148,6 +161,20 @@
 /* A lower rain target must persist this long before the wipers slow down. */
 #define WIPER_FALL_HOLD_MS      3000
 
+/*
+ * A higher rain target must persist this long before the wipers speed up.
+ * Filters a single glitched reading (one LIN poll = 50 ms) while still
+ * reacting within ~0.1 s.  0 = rise immediately.
+ */
+#define WIPER_RISE_HOLD_MS      100
+
+/*
+ * After boot, a dropout or a reported fault, the sensor must be continuously
+ * healthy for this long before the device overrules the car.  During the
+ * warm-up the car's value passes through untouched.  0 = off.
+ */
+#define WIPER_WARMUP_MS         2000
+
 /* A LIN reading older than this is treated as "no sensor" → passthrough. */
 #define LIN_STALE_MS            500
 
@@ -190,12 +217,14 @@
 #define TASK_PRIORITY_CAN_FWD        10
 #define TASK_PRIORITY_CAN_ALERT      9
 #define TASK_PRIORITY_LIN_POLL       8
+#define TASK_PRIORITY_WIPER_LOG      2
 #define TASK_PRIORITY_HEALTH         1
 
 #define TASK_STACK_CAN_FWD        4096
 #define TASK_STACK_CAN_ALERT      3072
 #define TASK_STACK_LIN_POLL       4096
 #define TASK_STACK_HEALTH         3072
+#define TASK_STACK_WIPER_LOG      3072
 
 #define HEALTH_LOG_INTERVAL_MS    5000
 
@@ -210,5 +239,9 @@
 /* 1 = log raw LIN response bytes on every poll. */
 #define DEBUG_LIN_SENSOR        0
 
-/* 1 = log every wiper policy decision (one line per 0x3E9 frame). */
+/*
+ * 1 = log every wiper policy decision (one line per 0x3E9 frame).  Goes
+ * through the same low-priority log queue as transitions, so it never blocks
+ * forwarding, but lines are dropped (and counted as logDrop) on overflow.
+ */
 #define DEBUG_WIPER_POLICY      0
