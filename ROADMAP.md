@@ -1,6 +1,7 @@
 # Roadmap — tesla-autoWiper
 
-> Status date: 2026-10-26
+> Status date: 2026-11-12 (review fixes on branch `review-fixes`; see
+> "Review fixes" under Phase 2 and the Known issues table)
 > **Production target: ESP32-C6.** The bench board is an ESP32-P4, which is
 > still supported.
 > **Verification level:** the firmware builds for both chips, and the protocol
@@ -70,6 +71,23 @@ and later need the bench or the car.
       panic → reboot). An alert task does bus-off recovery. Queues are 64
       deep, and the TWAI ISR runs in IRAM. The tick rate is 1 kHz so LIN
       timeouts are accurate.
+- [x] **Review fixes (2026-11-12), code done, hardware unverified:**
+      explicit `CAN_BITRATE_KBPS` with no default (build `#error`s
+      without it; CI builds 500 kbit/s bench artifacts); sensor status
+      gating via `LIN_SENSOR_FAULT_MASK` (disabled by default, bits
+      unverified); opt-in raise-only mode `WIPER_ALLOW_OVERRIDE_DOWN 0`;
+      alert task on the task watchdog; LIN counters under the mutex;
+      `./idf.sh flash monitor` fixed. New docs: `docs/hardware.md`,
+      `docs/bench-bringup.md`.
+- [x] **Second batch (2026-11-12), code done, hardware unverified, only
+      stub-compiled:** a listen-only **sniffer build** (`SNIFFER=1` /
+      `-DWIPER_SNIFFER=1`) for Phase 3.1; a 2 s **sensor warm-up**
+      (`WIPER_WARMUP_MS`) before taking authority, restarted by any dropout
+      or fault; a 100 ms **rise debounce** (`WIPER_RISE_HOLD_MS`); wiper
+      transition logging moved out of the CAN forwarding task (queue +
+      low-priority task); a lower LIN UART RX idle timeout and a settle
+      delay after the break; `.env` no longer overrides the command line;
+      host Python only needed for flash/monitor; `tools/make_3e9.py`.
 - [ ] **Bench run** to close out this phase. Exit criterion: on the P4 bench
       (or a C6 dev board), with the sensor connected and hand-wetted, the
       health log shows `LIN OK` and speed transitions are stable. A second CAN
@@ -77,7 +95,11 @@ and later need the bench or the car.
       receiving node should confirm the rewritten frames have valid checksums.
 
 ### Bench procedure for the human (Phase 2 exit)
-1. Flash the bench board: `IDF_TARGET=esp32p4 ./idf.sh build && ./idf.sh flash monitor`.
+The detailed version (wiring, SocketCAN commands, expected output) is
+[docs/bench-bringup.md](docs/bench-bringup.md).
+
+1. Flash the bench board: `CAN_BITRATE_KBPS=500 IDF_TARGET=esp32p4 ./idf.sh build && ./idf.sh flash monitor`
+   (use the rate your USB-CAN adapters are set to).
 2. **Sensor only:** confirm the `[HEALTH] LIN OK` line appears. If it says
    `--`, check the counters:
    - `to` going up: no response. Check wiring, 12 V to the sensor, and the
@@ -85,21 +107,32 @@ and later need the bench or the car.
    - `echo` going up: the transceiver RXD isn't seeing our TX. Check the wiring.
    - `cs` going up: the checksum type may be classic rather than enhanced.
      That would be a code change.
+   - Still nothing: some LIN slaves need the master to publish a frame
+     (configuration/status) before they answer. Unknown for this sensor.
+   Record the status byte (`st=`) at power-up, normal and lifted off the
+   glass. That's what `LIN_SENSOR_FAULT_MASK` needs.
    Set `DEBUG_LIN_SENSOR 1` and wet the sensor to confirm byte 0 bits [3:0]
    track the rain.
 3. **CAN:** use a USB-CAN adapter (or a second ESP) on each side. Send 0x3E9
-   on the car side and confirm it arrives on the wiper side with speed ≥ our
-   target and a valid byte 7. Send other IDs and confirm they arrive
+   on the car side and confirm it arrives on the wiper side with speed
+   **equal to** our target (the policy is authoritative; in raise-only mode
+   it's the higher of ours and the car's) and a valid byte 7. Send other IDs and confirm they arrive
    byte-for-byte identical in both directions. Watch the `drop`/`miss`/`off`
-   counters under a flood test (`cangen` at full rate).
+   counters under a flood test (`cangen` at full rate). Also check 0x3E9
+   latency while flooding with other IDs: the ESP retransmits in FIFO
+   order, so the original senders' priority arbitration is lost.
 
 ## Phase 3: Vehicle validation (requires the car, go slow)
 
 Each step is only safe if the previous one passed.
 
-1. [ ] **Sniff first, inject nothing.** Find the harness point that carries
+1. [ ] **Sniff first, inject nothing.** Build with `SNIFFER=1` (listen-only:
+       it never transmits, not even ACKs) and connect it **in parallel**
+       (a T-tap), not inline. Find the harness point that carries
        0x3E9 between the AP computer and the body controller. **Measure the
-       bus bitrate** (500 kbit/s expected) and set `CAN_BAUD_RATE`. Log real
+       bus bitrate** (500 kbit/s expected) and build with that
+       `CAN_BITRATE_KBPS`. Record the bus, tap point, connector, pins and
+       the other nodes on the segment in `docs/hardware.md` §7. Log real
        0x3E9 traffic: its rate, how the counter behaves, and the checksum.
        Confirm `tesla_checksum` reproduces byte 7 for every frame. If it
        does, add a few real frames to `test/test_main.c` as golden vectors.
@@ -115,7 +148,9 @@ Each step is only safe if the previous one passed.
        health counters should show `drop=0 miss=0 off=0`.
 3. [ ] **Check the sensor on Tesla glass.** Glass thickness and the coupling
        gel affect optical rain sensors.
-4. [ ] **First override.** Park and use washer fluid. Confirm the car acts on
+4. [ ] **First override.** Use raise-only mode (`WIPER_ALLOW_OVERRIDE_DOWN 0`)
+       until step 1's manual/washer question is answered and step 3 passed.
+       Park and use washer fluid. Confirm the car acts on
        our speed and accepts the recomputed checksum with the passed-through
        counter. Test both directions: raise (wet sensor, car says 0) and
        suppress (dry sensor, car requesting a wipe, which should give no wipe). Only then do a road test in real rain.
@@ -124,18 +159,25 @@ Each step is only safe if the previous one passed.
 
 ## Phase 4: Fail-safety (before daily driving)
 
-- [ ] **Hardware bypass.** The ESP physically breaks the CAN path. Add a
-      normally-closed relay (or an analog switch) that bridges the two buses
-      whenever the ESP is unpowered or not asserting a "healthy" GPIO.
-      Software can't cover a dead chip. This also covers the boot window and
-      the reboot after a watchdog reset.
-- [x] Task watchdog on the forwarding tasks (done in Phase 2).
+- [ ] **Hardware bypass (hard prerequisite for driving).** The ESP
+      physically breaks the CAN path. Add a normally-closed relay (or an
+      analog switch) that bridges the two buses whenever the ESP is
+      unpowered or not asserting a "healthy" GPIO. Software can't cover a
+      dead chip. This also covers the boot window and the reboot after a
+      watchdog reset. The bridge must also take the ESP-side 120 Ω
+      terminators off the bus while bridged (docs/hardware.md §4/§8).
+- [ ] Firmware drives a "healthy" GPIO for the bypass (not implemented).
+- [x] Task watchdog on the forwarding tasks (done in Phase 2) and the alert
+      task (2026-11-12, code done).
 - [x] Bus-off recovery (done in Phase 2).
 - [ ] Measure the time from key-on 12 V to passthrough being active, and
       document it.
 - [ ] Failure-mode table with observed behavior for: power loss, crash/WDT,
-      bus-off on either side, sensor unplugged mid-rain, and sensor giving
-      garbage.
+      bus-off on either side, sensor unplugged mid-rain, sensor giving
+      garbage, and sensor reading dry while it rains (bad optical coupling).
+- [ ] Power: fuse, reverse polarity, TVS, automotive regulator (requirements
+      in docs/hardware.md §3); sleep or switched feed so it can't drain the
+      12 V battery (firmware never sleeps today).
 
 ## Phase 5: Backlog (unordered)
 
@@ -145,7 +187,7 @@ Each step is only safe if the previous one passed.
 - [ ] C6-native extras: it has Wi-Fi 6 and BLE built in, so a BLE or Wi-Fi
       debug/telemetry page is possible (the P4 has no radio).
 - [ ] PCB for the C6 module. Document the breadboard first in
-      `docs/hardware.md`, with photos.
+      `docs/hardware.md` (draft exists, mostly TODO), with photos.
 - [ ] Optional hardware filter: only ever take 0x3E9 out of the fast path.
       This only matters if the bench flood test shows drops.
 
@@ -164,8 +206,23 @@ Each step is only safe if the previous one passed.
 | 7 | can_gateway | Stale comments, polling design | ✅ fixed (per-direction blocking tasks) |
 | 8 | DOCKER_DEV.md | Wrong artifact, missing .env.example | ✅ fixed |
 | 9 | repo root | No LICENSE | ✅ fixed (MIT) |
-| 10 | config.h | CAN bitrate 1 Mbit/s, car is likely 500 kbit/s | ⚠️ open: confirm in Phase 3.1 |
+| 10 | config.h | CAN bitrate 1 Mbit/s, car is likely 500 kbit/s | ✅ silent default removed: `CAN_BITRATE_KBPS` required (code done). ⚠️ car rate still unconfirmed: Phase 3.1 |
 | 11 | config.h | C6 pins untested | ⚠️ open: bench check on a C6 board |
 | 12 | lin_sensor.c | Assumes the transceiver echoes TX (`LIN_EXPECT_ECHO=1`); a non-echo setup times out | ⚠️ by design, switch in config.h |
 | 13 | wiper_policy | Unknown whether the body controller ignores DAS_wiperSpeed when the stalk isn't in auto. **Higher stakes now that we're authoritative:** if it doesn't ignore it, we could force wipers OFF against a manual stalk setting or a washer cycle | ⚠️ open: Phase 3.1 captures, must answer before road use |
-| 14 | lin_sensor.c | `uart_set_baudrate` mid-frame for the break: timing on the C6 UART is unverified | ⚠️ open: scope it on the bench |
+| 14 | lin_sensor.c | `uart_set_baudrate` mid-frame for the break: timing on the C6 UART is unverified | ⚠️ open: settle delay added after the break; still scope it on the bench |
+| 15 | wiper_policy | "Sensor healthy" meant only "checksum valid"; status byte ignored | ✅ code done: `LIN_SENSOR_FAULT_MASK` + tests. ⚠️ mask is 0x00 (disabled) until the status bits are measured |
+| 16 | wiper_policy | A sensor that talks but isn't optically coupled reads dry forever; authoritative mode then forces wipers off in rain | ⚠️ open: no detection. Mitigation: raise-only mode (`WIPER_ALLOW_OVERRIDE_DOWN 0`, code done + tests) for first road tests |
+| 17 | can_gateway.c | Alert/recovery task not on the task watchdog | ✅ code done, hardware unverified |
+| 18 | lin_sensor.c | `s_stats` incremented without the mutex | ✅ code done |
+| 19 | idf.sh | `./idf.sh flash monitor` only flashed (case label unreachable) | ✅ fixed |
+| 20 | can_gateway.c | Single-node FIFO retransmit loses the senders' CAN priority arbitration; a burst can delay 0x3E9 | ⚠️ open: measure in the bench flood test |
+| 21 | can_gateway.c | The ESP ACKs on both sides, so upstream nodes can't see that the downstream side is dead | ⚠️ open: by design of a gateway; Phase 4 bypass |
+| 22 | main.c | Never sleeps: battery drain on an always-on feed | ⚠️ open: Phase 4 power work |
+| 23 | lin_sensor.c | Only polls 0x21; the sensor may need a master frame first | ⚠️ open: unknown until bench bring-up |
+| 24 | docs | Bus, tap point, connectors, pinouts, other nodes, sensor part number all undocumented | ⚠️ open: TODO tables in docs/hardware.md |
+| 25 | lin_sensor.c | UART RX idle timeout (10 symbols ≈ 5 ms) used up most of the 12 ms slot timeout, so polls could time out | ✅ code done (rx timeout 2 symbols, +8 ms margin), hardware unverified |
+| 26 | wiper_logic.c | `ESP_LOGI` on every speed transition ran inside the CAN forwarding task (console I/O blocks) | ✅ code done (queue + low-priority log task, `logDrop` counter) |
+| 27 | wiper_policy | A single glitched reading jumped straight to max speed; a freshly (re)connected sensor took authority on its first frame | ✅ code done + tests (100 ms rise debounce, 2 s warm-up) |
+| 28 | idf.sh | `.env` overrode command-line variables; host Python required even for build; volume name dropped `_` | ✅ fixed |
+| 29 | ROADMAP 3.1 | No safe way to measure the car's bus with this hardware | ✅ code done: sniffer build (listen-only); hardware unverified |

@@ -65,16 +65,53 @@
 /* ─── CAN (TWAI) ─────────────────────────────────────────────────────────── */
 
 /*
- * Both buses run at the same rate.
+ * CAN bitrate in kbit/s, both buses.  THERE IS NO DEFAULT, ON PURPOSE.
  *
- * !! CHECK BEFORE INSTALLING IN THE CAR !!
- * Tesla Model 3/Y vehicle/party buses are generally reported as 500 kbit/s.
- * 1 Mbit/s was set for bench work.  A wrong bitrate means the gateway
- * receives nothing and the wipers lose their command path.  Confirm with a
- * sniffer on the actual harness (ROADMAP Phase 3, step 1) and set this to match.
+ * !! A WRONG BITRATE IN THE CAR = A DEAD BUS SEGMENT !!
+ * The gateway would receive nothing, so every frame behind it stops
+ * (not just the wipers).  Tesla Model 3/Y vehicle/party buses are generally
+ * reported as 500 kbit/s — EXPECTED, UNCONFIRMED.  Measure it on the actual
+ * harness with a sniffer first (ROADMAP Phase 3, step 1).
+ *
+ * Set it one of two ways:
+ *   1. On the command line (recommended, nothing to forget in the tree):
+ *        CAN_BITRATE_KBPS=500 ./idf.sh build
+ *        idf.py -B build -DCAN_BITRATE_KBPS=500 set-target esp32c6 build
+ *      main/CMakeLists.txt turns that into a compile definition.  The value
+ *      is remembered in that build dir's CMake cache until `fullclean`.
+ *   2. Or uncomment and edit the line below.
+ *
+ * Supported values: 125, 250, 500, 1000.  The rate is printed at boot.
+ * CI builds use 500 and are labelled bench builds (see .github/workflows).
  */
+// #define CAN_BITRATE_KBPS     500
+
+#ifndef CAN_BITRATE_KBPS
+#error "CAN_BITRATE_KBPS is not set. Measure the car's bus first (500 kbit/s expected, UNCONFIRMED), then build with e.g. `CAN_BITRATE_KBPS=500 ./idf.sh build` or `idf.py -DCAN_BITRATE_KBPS=500 build`. See main/config.h."
+#elif CAN_BITRATE_KBPS == 125
+#define CAN_BAUD_RATE           TWAI_TIMING_CONFIG_125KBITS()
+#elif CAN_BITRATE_KBPS == 250
+#define CAN_BAUD_RATE           TWAI_TIMING_CONFIG_250KBITS()
+#elif CAN_BITRATE_KBPS == 500
+#define CAN_BAUD_RATE           TWAI_TIMING_CONFIG_500KBITS()
+#elif CAN_BITRATE_KBPS == 1000
 #define CAN_BAUD_RATE           TWAI_TIMING_CONFIG_1MBITS()
-// #define CAN_BAUD_RATE        TWAI_TIMING_CONFIG_500KBITS()
+#else
+#error "Unsupported CAN_BITRATE_KBPS: use 125, 250, 500 or 1000 (or add a TWAI_TIMING_CONFIG_* case in config.h)"
+#endif
+
+/*
+ * Sniffer mode (ROADMAP Phase 3.1): both controllers listen-only, nothing is
+ * transmitted (not even ACKs or error frames) and nothing is forwarded;
+ * 0x3E9 frames are checked and logged instead.  Connect IN PARALLEL to the
+ * bus (a T-tap), never inline — inline it would cut the bus.
+ *   SNIFFER=1 CAN_BITRATE_KBPS=500 ./idf.sh build
+ *   idf.py -B build -DCAN_BITRATE_KBPS=500 -DWIPER_SNIFFER=1 ... build
+ * main/CMakeLists.txt turns WIPER_SNIFFER into CAN_LISTEN_ONLY.
+ */
+#ifndef CAN_LISTEN_ONLY
+#define CAN_LISTEN_ONLY         0
+#endif
 
 /* Driver RX/TX queue depth per controller.  Frames, not bytes. */
 #define CAN_RX_QUEUE_LEN        64
@@ -124,8 +161,50 @@
 /* A lower rain target must persist this long before the wipers slow down. */
 #define WIPER_FALL_HOLD_MS      3000
 
+/*
+ * A higher rain target must persist this long before the wipers speed up.
+ * Filters a single glitched reading (one LIN poll = 50 ms) while still
+ * reacting within ~0.1 s.  0 = rise immediately.
+ */
+#define WIPER_RISE_HOLD_MS      100
+
+/*
+ * After boot, a dropout or a reported fault, the sensor must be continuously
+ * healthy for this long before the device overrules the car.  During the
+ * warm-up the car's value passes through untouched.  0 = off.
+ */
+#define WIPER_WARMUP_MS         2000
+
 /* A LIN reading older than this is treated as "no sensor" → passthrough. */
 #define LIN_STALE_MS            500
+
+/*
+ * Sensor status gating.  A reading whose status byte (byte 2) has any of
+ * these bits set is treated as "no sensor" → passthrough, and is counted
+ * (`flt=` / `fault=` in the [HEALTH] log).
+ *
+ * 0x00 = DISABLED, the default, because the meaning of the VAG status bits
+ * is UNVERIFIED.  Record byte 2 at power-up, in normal operation and with the
+ * sensor lifted off the glass (docs/bench-bringup.md, stage 2), then set the
+ * bits that mean "fault / initialising".  Do not guess: a wrong mask either
+ * does nothing or disables the module in normal use.
+ */
+#define LIN_SENSOR_FAULT_MASK   0x00
+
+/*
+ * 1 = AUTHORITATIVE (owner decision, the default): our speed replaces the AP
+ *     computer's request both up AND down, so phantom wipes on dry glass are
+ *     forced off.
+ * 0 = RAISE-ONLY: we may raise the AP computer's speed but never lower it.
+ *     The device can add wipes but can never remove one Tesla asked for.
+ *
+ * RECOMMENDED: 0 for the first road tests, until ROADMAP Phase 3.1 has
+ * captured manual-stalk and washer behaviour (known issue #13) and Phase 3.3
+ * has shown the sensor reads rain through Tesla glass.  In raise-only mode a
+ * sensor that wrongly reads "dry" (bad optical coupling) cannot switch the
+ * wipers off in real rain.
+ */
+#define WIPER_ALLOW_OVERRIDE_DOWN   1
 
 /* ─── FreeRTOS task priorities & stack sizes ────────────────────────────── */
 
@@ -138,12 +217,14 @@
 #define TASK_PRIORITY_CAN_FWD        10
 #define TASK_PRIORITY_CAN_ALERT      9
 #define TASK_PRIORITY_LIN_POLL       8
+#define TASK_PRIORITY_WIPER_LOG      2
 #define TASK_PRIORITY_HEALTH         1
 
 #define TASK_STACK_CAN_FWD        4096
 #define TASK_STACK_CAN_ALERT      3072
 #define TASK_STACK_LIN_POLL       4096
 #define TASK_STACK_HEALTH         3072
+#define TASK_STACK_WIPER_LOG      3072
 
 #define HEALTH_LOG_INTERVAL_MS    5000
 
@@ -158,5 +239,9 @@
 /* 1 = log raw LIN response bytes on every poll. */
 #define DEBUG_LIN_SENSOR        0
 
-/* 1 = log every wiper policy decision (one line per 0x3E9 frame). */
+/*
+ * 1 = log every wiper policy decision (one line per 0x3E9 frame).  Goes
+ * through the same low-priority log queue as transitions, so it never blocks
+ * forwarding, but lines are dropped (and counted as logDrop) on overflow.
+ */
 #define DEBUG_WIPER_POLICY      0

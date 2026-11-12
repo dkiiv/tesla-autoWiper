@@ -64,10 +64,12 @@ static void health_task(void *arg)
         uint32_t age = s.valid ? lin_sensor_now_ms() - s.timestamp_ms : 0;
         bool fresh = s.valid && age <= LIN_STALE_MS;
 
-        ESP_LOGI(TAG, "[HEALTH] LIN %s rain=%d light=%d age=%lums ok/to/cs/echo=%lu/%lu/%lu/%lu",
-                 fresh ? "OK " : "-- ", s.rain_intensity, s.light_intensity,
+        ESP_LOGI(TAG, "[HEALTH] LIN %s rain=%d light=%d st=0x%02X age=%lums "
+                 "ok/to/cs/echo/flt=%lu/%lu/%lu/%lu/%lu",
+                 fresh ? "OK " : "-- ", s.rain_intensity, s.light_intensity, s.status,
                  (unsigned long)age, (unsigned long)ls.ok, (unsigned long)ls.timeout,
-                 (unsigned long)ls.bad_checksum, (unsigned long)ls.bad_echo);
+                 (unsigned long)ls.bad_checksum, (unsigned long)ls.bad_echo,
+                 (unsigned long)ls.status_fault);
         ESP_LOGI(TAG, "[HEALTH] CAN car→act rx=%lu drop=%lu miss=%lu off=%lu | "
                  "act→car rx=%lu drop=%lu miss=%lu off=%lu",
                  (unsigned long)cs.car_to_act.rx, (unsigned long)cs.car_to_act.tx_drop,
@@ -76,9 +78,26 @@ static void health_task(void *arg)
                  (unsigned long)cs.act_to_car.rx, (unsigned long)cs.act_to_car.tx_drop,
                  (unsigned long)(cs.act_to_car.rx_missed + cs.act_to_car.rx_overrun),
                  (unsigned long)cs.act_to_car.bus_off);
-        ESP_LOGI(TAG, "[HEALTH] WIPER 0x3E9 seen=%lu modified=%lu badDLC=%lu oem=%d out=%d",
+#if CAN_LISTEN_ONLY
+        for (int i = 0; i < 2; i++) {
+            const can_sniff_stats_t *sn = &cs.sniff[i];
+            ESP_LOGI(TAG, "[HEALTH] SNIFF TWAI%d 0x3E9 seen=%lu badDLC=%lu badCS=%lu "
+                     "ctrSkip=%lu interval=%lu..%lums speed=%d",
+                     i, (unsigned long)sn->bodyctrl_seen, (unsigned long)sn->bad_dlc,
+                     (unsigned long)sn->bad_checksum, (unsigned long)sn->counter_skips,
+                     (unsigned long)sn->min_interval_ms, (unsigned long)sn->max_interval_ms,
+                     sn->last_speed);
+        }
+#else
+        ESP_LOGI(TAG, "[HEALTH] WIPER 0x3E9 seen=%lu modified=%lu badDLC=%lu fault=%lu "
+                 "oem=%d out=%d mode=%s %s logDrop=%lu",
                  (unsigned long)ws.frames_seen, (unsigned long)ws.frames_modified,
-                 (unsigned long)ws.bad_dlc, ws.last_oem_speed, ws.last_out_speed);
+                 (unsigned long)ws.bad_dlc, (unsigned long)ws.sensor_fault,
+                 ws.last_oem_speed, ws.last_out_speed,
+                 WIPER_ALLOW_OVERRIDE_DOWN ? "auth" : "raise",
+                 ws.frames_seen ? wiper_decision_reason_str(ws.last_reason) : "-",
+                 (unsigned long)ws.log_dropped);
+#endif
     }
 }
 
@@ -90,6 +109,10 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Rain-Sensor Wiper Controller  (%s, ESP-IDF %s)",
              CONFIG_IDF_TARGET, esp_get_idf_version());
+#if CAN_LISTEN_ONLY
+    ESP_LOGW(TAG, "SNIFFER build: listen-only, nothing forwarded. "
+                  "Connect in PARALLEL to the bus, NOT inline.");
+#endif
 
     /* Order matters: wiper logic must be ready before CAN frames start flowing. */
     ESP_ERROR_CHECK(wiper_logic_init());
@@ -105,11 +128,25 @@ void app_main(void)
     ESP_ERROR_CHECK(can_gateway_init());
     ESP_ERROR_CHECK(can_gateway_start());
 
+    /* Both non-fatal: without them CAN passthrough still runs. */
+    bool lin_running = false;
     if (lin_ret == ESP_OK) {
-        xTaskCreate(lin_sensor_task, "lin_sensor", TASK_STACK_LIN_POLL, NULL,
-                    TASK_PRIORITY_LIN_POLL, NULL);
+        lin_running = xTaskCreate(lin_sensor_task, "lin_sensor", TASK_STACK_LIN_POLL, NULL,
+                                  TASK_PRIORITY_LIN_POLL, NULL) == pdPASS;
+        if (!lin_running) {
+            ESP_LOGE(TAG, "LIN task create failed - CAN passthrough only");
+        }
     }
-    xTaskCreate(health_task, "health", TASK_STACK_HEALTH, NULL, TASK_PRIORITY_HEALTH, NULL);
+    if (xTaskCreate(wiper_logic_log_task, "wiper_log", TASK_STACK_WIPER_LOG, NULL,
+                    TASK_PRIORITY_WIPER_LOG, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Wiper log task create failed - no transition log");
+    }
+    if (xTaskCreate(health_task, "health", TASK_STACK_HEALTH, NULL,
+                    TASK_PRIORITY_HEALTH, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Health task create failed - no [HEALTH] log");
+    }
 
-    ESP_LOGI(TAG, "Running  CAN passthrough=ON  LIN=%s", lin_ret == ESP_OK ? "ON" : "OFF");
+    ESP_LOGI(TAG, "Running  CAN %s  LIN=%s",
+             CAN_LISTEN_ONLY ? "sniffer (listen-only)" : "passthrough=ON",
+             lin_running ? "ON" : "OFF");
 }

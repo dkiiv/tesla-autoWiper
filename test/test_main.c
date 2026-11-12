@@ -168,34 +168,34 @@ static void test_policy_passthrough(void)
     puts("wiper_policy: passthrough cases");
     wiper_policy_t p = make_policy();
 
-    wiper_decision_t d = wiper_policy_step(&p, 0, false, 0, 8, 3);
+    wiper_decision_t d = wiper_policy_step(&p, 0, false, 0, 0, 8, 3);
     CHECK_EQ(d.modify, 0);
     CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_NO_SENSOR);
 
-    d = wiper_policy_step(&p, 0, true, 501, 8, 3);      /* stale reading */
+    d = wiper_policy_step(&p, 0, true, 501, 0, 8, 3);      /* stale reading */
     CHECK_EQ(d.modify, 0);
     CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_NO_SENSOR);
 
-    d = wiper_policy_step(&p, 0, true, 500, 8, 3);      /* exactly at limit = fresh */
+    d = wiper_policy_step(&p, 0, true, 500, 0, 8, 3);      /* exactly at limit = fresh */
     CHECK_EQ(d.modify, 1);
 
-    d = wiper_policy_step(&p, 10, true, 0, 8, 15);      /* car says SNA */
+    d = wiper_policy_step(&p, 10, true, 0, 0, 8, 15);      /* car says SNA */
     CHECK_EQ(d.modify, 0);
     CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_OEM_SNA);
 
-    d = wiper_policy_step(&p, 20, true, 0, 9, 9);       /* car agrees exactly */
+    d = wiper_policy_step(&p, 20, true, 0, 0, 9, 9);       /* car agrees exactly */
     CHECK_EQ(d.modify, 0);
     CHECK_EQ(d.speed, 9);
     CHECK_EQ(d.reason, WIPER_DECISION_AGREE);
 
     /* Still inside the 3 s fall hold from speed 9 → we keep overriding. */
-    d = wiper_policy_step(&p, 30, true, 0, 0, 0);
+    d = wiper_policy_step(&p, 30, true, 0, 0, 0, 0);
     CHECK_EQ(d.modify, 1);
     CHECK_EQ(d.speed, 9);
     CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_UP);
 
     p = make_policy();                                  /* fresh: dry + car off */
-    d = wiper_policy_step(&p, 0, true, 0, 0, 0);
+    d = wiper_policy_step(&p, 0, true, 0, 0, 0, 0);
     CHECK_EQ(d.modify, 0);                              /* equal → nothing to rewrite */
     CHECK_EQ(d.reason, WIPER_DECISION_AGREE);
 }
@@ -211,26 +211,26 @@ static void test_policy_authoritative(void)
     wiper_policy_t p = make_policy();
 
     /* Dry glass, car wants to wipe → we force OFF. */
-    wiper_decision_t d = wiper_policy_step(&p, 0, true, 0, 0, 5);
+    wiper_decision_t d = wiper_policy_step(&p, 0, true, 0, 0, 0, 5);
     CHECK_EQ(d.modify, 1);
     CHECK_EQ(d.speed, 0);
     CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_DOWN);
 
     /* Every possible car request on dry glass → always 0. */
     for (int oem = 1; oem <= 14; oem++) {
-        d = wiper_policy_step(&p, 10, true, 0, 0, (uint8_t)oem);
+        d = wiper_policy_step(&p, 10, true, 0, 0, 0, (uint8_t)oem);
         CHECK_EQ(d.modify, 1);
         CHECK_EQ(d.speed, 0);
     }
 
     /* Light rain (speed 2), car wants max → we hold 2. */
-    d = wiper_policy_step(&p, 20, true, 0, 2, 14);
+    d = wiper_policy_step(&p, 20, true, 0, 0, 2, 14);
     CHECK_EQ(d.modify, 1);
     CHECK_EQ(d.speed, 2);
     CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_DOWN);
 
     /* Heavy rain, car thinks dry → we raise. */
-    d = wiper_policy_step(&p, 30, true, 0, 10, 0);
+    d = wiper_policy_step(&p, 30, true, 0, 0, 10, 0);
     CHECK_EQ(d.modify, 1);
     CHECK_EQ(d.speed, 10);
     CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_UP);
@@ -239,7 +239,7 @@ static void test_policy_authoritative(void)
     p = make_policy();
     uint8_t frame[8] = {0x51, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x00};  /* oem speed 5 */
     frame[7] = tesla_checksum(0x3E9, frame, 8, 7);
-    d = wiper_policy_step(&p, 0, true, 0, 0, tesla_wiper_speed_get(frame));
+    d = wiper_policy_step(&p, 0, true, 0, 0, 0, tesla_wiper_speed_get(frame));
     if (d.modify) tesla_wiper_speed_set(frame, d.speed);
     CHECK_EQ(tesla_wiper_speed_get(frame), 0);
     CHECK_EQ(frame[0] & 0x0F, 0x1);                        /* low bits untouched */
@@ -247,7 +247,7 @@ static void test_policy_authoritative(void)
     CHECK_EQ(frame[7], ref_tesla_cs(0x3E9, frame, 8, 7));  /* valid checksum */
 
     /* Fail-safe still holds: sensor gone → car's value passes through. */
-    d = wiper_policy_step(&p, 100, false, 0, 0, 5);
+    d = wiper_policy_step(&p, 100, false, 0, 0, 0, 5);
     CHECK_EQ(d.modify, 0);
     CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_NO_SENSOR);
 }
@@ -257,7 +257,7 @@ static void test_policy_map_clamp(void)
     puts("wiper_policy: map clamps to 14");
     wiper_policy_t p = make_policy();
     CHECK_EQ(p.cfg.rain_to_speed[15], 14);
-    wiper_decision_t d = wiper_policy_step(&p, 0, true, 0, 15, 0);
+    wiper_decision_t d = wiper_policy_step(&p, 0, true, 0, 0, 15, 0);
     CHECK_EQ(d.modify, 1);
     CHECK_EQ(d.speed, 14);
 }
@@ -267,41 +267,274 @@ static void test_policy_hysteresis(void)
     puts("wiper_policy: rise fast, fall slow");
     wiper_policy_t p = make_policy();
 
-    wiper_decision_t d = wiper_policy_step(&p, 0, true, 0, 6, 0);
+    wiper_decision_t d = wiper_policy_step(&p, 0, true, 0, 0, 6, 0);
     CHECK_EQ(d.speed, 6);                                  /* immediate rise */
 
-    d = wiper_policy_step(&p, 100, true, 0, 9, 0);
+    d = wiper_policy_step(&p, 100, true, 0, 0, 9, 0);
     CHECK_EQ(d.speed, 9);                                  /* immediate rise */
 
-    d = wiper_policy_step(&p, 200, true, 0, 2, 0);
+    d = wiper_policy_step(&p, 200, true, 0, 0, 2, 0);
     CHECK_EQ(d.speed, 9);                                  /* hold */
-    d = wiper_policy_step(&p, 1200, true, 0, 4, 0);
+    d = wiper_policy_step(&p, 1200, true, 0, 0, 4, 0);
     CHECK_EQ(d.speed, 9);                                  /* still holding, max-in-window=4 */
-    d = wiper_policy_step(&p, 3199, true, 0, 3, 0);
+    d = wiper_policy_step(&p, 3199, true, 0, 0, 3, 0);
     CHECK_EQ(d.speed, 9);                                  /* 2999 ms — not yet */
-    d = wiper_policy_step(&p, 3200, true, 0, 3, 0);
+    d = wiper_policy_step(&p, 3200, true, 0, 0, 3, 0);
     CHECK_EQ(d.speed, 4);                                  /* drop to highest seen in window */
 
     /* A rise during a pending fall cancels the fall. */
-    d = wiper_policy_step(&p, 3300, true, 0, 1, 0);
+    d = wiper_policy_step(&p, 3300, true, 0, 0, 1, 0);
     CHECK_EQ(d.speed, 4);
-    d = wiper_policy_step(&p, 3400, true, 0, 7, 0);
+    d = wiper_policy_step(&p, 3400, true, 0, 0, 7, 0);
     CHECK_EQ(d.speed, 7);
-    d = wiper_policy_step(&p, 6000, true, 0, 7, 0);
+    d = wiper_policy_step(&p, 6000, true, 0, 0, 7, 0);
     CHECK_EQ(d.speed, 7);
 
     /* Dry for long enough → off (equal to OEM 0 → passthrough, speed 0). */
-    wiper_policy_step(&p, 7000, true, 0, 0, 0);
-    d = wiper_policy_step(&p, 10000, true, 0, 0, 0);
+    wiper_policy_step(&p, 7000, true, 0, 0, 0, 0);
+    d = wiper_policy_step(&p, 10000, true, 0, 0, 0, 0);
     CHECK_EQ(p.current, 0);
     CHECK_EQ(d.modify, 0);
 
     /* Sensor loss resets state: no stale high speed when it comes back. */
-    wiper_policy_step(&p, 11000, true, 0, 12, 0);
+    wiper_policy_step(&p, 11000, true, 0, 0, 12, 0);
     CHECK_EQ(p.current, 12);
-    wiper_policy_step(&p, 11100, false, 0, 0, 0);
-    d = wiper_policy_step(&p, 11200, true, 0, 2, 0);
+    wiper_policy_step(&p, 11100, false, 0, 0, 0, 0);
+    d = wiper_policy_step(&p, 11200, true, 0, 0, 2, 0);
     CHECK_EQ(d.speed, 2);
+}
+
+/*
+ * Status gating: a reading whose status byte hits status_fault_mask is
+ * treated exactly like "no sensor".  Mask 0 (the shipped default, because
+ * the VAG status bits are unverified) must never gate anything.
+ */
+static void test_policy_status_mask(void)
+{
+    puts("wiper_policy: sensor status fault mask");
+
+    /* Mask 0 = disabled: any status value is ignored. */
+    wiper_policy_t p = make_policy();
+    for (int st = 0; st < 256; st++) {
+        wiper_decision_t d = wiper_policy_step(&p, 0, true, 0, (uint8_t)st, 0, 5);
+        CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_DOWN);
+        CHECK_EQ(d.modify, 1);
+    }
+
+    p = make_policy();
+    p.cfg.status_fault_mask = 0x81;
+
+    /* Bits outside the mask → normal policy. */
+    wiper_decision_t d = wiper_policy_step(&p, 0, true, 0, 0x7E, 0, 5);
+    CHECK_EQ(d.modify, 1);
+    CHECK_EQ(d.speed, 0);
+    CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_DOWN);
+
+    /* Either masked bit → passthrough, car's value untouched. */
+    d = wiper_policy_step(&p, 10, true, 0, 0x01, 0, 5);
+    CHECK_EQ(d.modify, 0);
+    CHECK_EQ(d.speed, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_SENSOR_FAULT);
+    d = wiper_policy_step(&p, 20, true, 0, 0x80, 12, 0);
+    CHECK_EQ(d.modify, 0);
+    CHECK_EQ(d.speed, 0);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_SENSOR_FAULT);
+
+    /* Exhaustive: gated iff status & mask. */
+    for (int st = 0; st < 256; st++) {
+        d = wiper_policy_step(&p, 30, true, 0, (uint8_t)st, 0, 5);
+        CHECK_EQ(d.reason == WIPER_DECISION_PASSTHROUGH_SENSOR_FAULT, (st & 0x81) != 0);
+    }
+
+    /* A fault resets the hysteresis state like a sensor loss does. */
+    p = make_policy();
+    p.cfg.status_fault_mask = 0x01;
+    wiper_policy_step(&p, 0, true, 0, 0x00, 12, 0);
+    CHECK_EQ(p.current, 12);
+    wiper_policy_step(&p, 100, true, 0, 0x01, 12, 0);
+    CHECK_EQ(p.current, 0);
+    d = wiper_policy_step(&p, 200, true, 0, 0x00, 2, 0);
+    CHECK_EQ(d.speed, 2);                       /* no stale 12 held over */
+
+    /* Stale still wins over (and is reported before) a fault. */
+    d = wiper_policy_step(&p, 300, true, 501, 0x01, 2, 0);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_NO_SENSOR);
+}
+
+/*
+ * Raise-only mode (WIPER_ALLOW_OVERRIDE_DOWN 0): we can add wipes but never
+ * remove or slow one the car asked for.
+ */
+static void test_policy_raise_only(void)
+{
+    puts("wiper_policy: raise-only mode");
+    wiper_policy_t p = make_policy();
+    p.cfg.raise_only = true;
+
+    /* Dry glass, car wants to wipe → the car's request stands. */
+    wiper_decision_t d = wiper_policy_step(&p, 0, true, 0, 0, 0, 5);
+    CHECK_EQ(d.modify, 0);
+    CHECK_EQ(d.speed, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_RAISE_ONLY);
+
+    /* Rain heavier than the car thinks → we still raise. */
+    d = wiper_policy_step(&p, 10, true, 0, 0, 10, 3);
+    CHECK_EQ(d.modify, 1);
+    CHECK_EQ(d.speed, 10);
+    CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_UP);
+
+    /* Equal → agree, nothing rewritten. */
+    d = wiper_policy_step(&p, 20, true, 0, 0, 10, 10);
+    CHECK_EQ(d.modify, 0);
+    CHECK_EQ(d.reason, WIPER_DECISION_AGREE);
+
+    /* Exhaustive: output is never below the car's request. */
+    for (int rain = 0; rain < 16; rain++) {
+        for (int oem = 0; oem <= 14; oem++) {
+            wiper_policy_t q = make_policy();
+            q.cfg.raise_only = true;
+            d = wiper_policy_step(&q, 0, true, 0, 0, (uint8_t)rain, (uint8_t)oem);
+            uint8_t out = d.modify ? d.speed : (uint8_t)oem;
+            CHECK_EQ(out >= oem, 1);
+            CHECK_EQ(out, (q.current > oem) ? q.current : oem);
+        }
+    }
+
+    /* Hysteresis state keeps tracking the rain while the car wins. */
+    p = make_policy();
+    p.cfg.raise_only = true;
+    wiper_policy_step(&p, 0, true, 0, 0, 8, 12);
+    CHECK_EQ(p.current, 8);
+
+    /* SNA still passes through untouched. */
+    d = wiper_policy_step(&p, 10, true, 0, 0, 14, 15);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_OEM_SNA);
+}
+
+static void test_policy_reason_strings(void)
+{
+    puts("wiper_decision_reason_str");
+    for (int r = WIPER_DECISION_PASSTHROUGH_NO_SENSOR; r <= WIPER_DECISION_PASSTHROUGH_WARMUP; r++) {
+        CHECK_EQ(strcmp(wiper_decision_reason_str((wiper_decision_reason_t)r), "?") != 0, 1);
+    }
+}
+
+static wiper_policy_t make_policy_ex(uint32_t rise_hold_ms, uint32_t warmup_ms)
+{
+    wiper_policy_t p = make_policy();
+    p.cfg.rise_hold_ms = rise_hold_ms;
+    p.cfg.warmup_ms    = warmup_ms;
+    return p;
+}
+
+static void test_bodyctrl_helpers(void)
+{
+    puts("tesla_bodyctrl_counter_get / checksum_ok");
+    uint8_t d[8] = {0x51, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC3, 0x01};  /* valid cs is 0x00 */
+    CHECK_EQ(tesla_bodyctrl_counter_get(d), 0xC);
+    CHECK_EQ(tesla_bodyctrl_checksum_ok(d), 0);
+    d[7] = ref_tesla_cs(0x3E9, d, 8, 7);
+    CHECK_EQ(tesla_bodyctrl_checksum_ok(d), 1);
+    d[3] ^= 0x01;                                   /* corrupt one bit */
+    CHECK_EQ(tesla_bodyctrl_checksum_ok(d), 0);
+    tesla_wiper_speed_set(d, 7);                    /* set always leaves it valid */
+    CHECK_EQ(tesla_bodyctrl_checksum_ok(d), 1);
+}
+
+static void test_policy_warmup(void)
+{
+    puts("wiper_policy: warm-up before taking authority");
+    wiper_policy_t p = make_policy_ex(0, 2000);
+
+    /* Dry sensor, car wants to wipe: hands off until 2 s of healthy data. */
+    wiper_decision_t d = wiper_policy_step(&p, 1000, true, 0, 0, 0, 5);
+    CHECK_EQ(d.modify, 0);
+    CHECK_EQ(d.speed, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_WARMUP);
+    d = wiper_policy_step(&p, 2999, true, 0, 0, 0, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_WARMUP);
+    d = wiper_policy_step(&p, 3000, true, 0, 0, 0, 5);
+    CHECK_EQ(d.modify, 1);
+    CHECK_EQ(d.speed, 0);
+    CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_DOWN);
+
+    /* A dropout restarts the warm-up. */
+    d = wiper_policy_step(&p, 3100, true, 501, 0, 0, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_NO_SENSOR);
+    d = wiper_policy_step(&p, 3200, true, 0, 0, 0, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_WARMUP);
+    d = wiper_policy_step(&p, 5199, true, 0, 0, 0, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_WARMUP);
+    d = wiper_policy_step(&p, 5200, true, 0, 0, 0, 5);
+    CHECK_EQ(d.speed, 0);
+    CHECK_EQ(d.modify, 1);
+
+    /* So does a reported sensor fault. */
+    p.cfg.status_fault_mask = 0x80;
+    d = wiper_policy_step(&p, 5300, true, 0, 0x80, 0, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_SENSOR_FAULT);
+    d = wiper_policy_step(&p, 5400, true, 0, 0x00, 0, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_WARMUP);
+    d = wiper_policy_step(&p, 7400, true, 0, 0x00, 0, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_DOWN);
+
+    /* State keeps tracking rain during warm-up: wet from the start → our
+     * speed is ready the moment warm-up ends. */
+    p = make_policy_ex(0, 2000);
+    wiper_policy_step(&p, 0, true, 0, 0, 6, 0);
+    d = wiper_policy_step(&p, 2000, true, 0, 0, 6, 0);
+    CHECK_EQ(d.speed, 6);
+    CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_UP);
+
+    /* Raise-only still applies after warm-up. */
+    p = make_policy_ex(0, 2000);
+    p.cfg.raise_only = true;
+    wiper_policy_step(&p, 0, true, 0, 0, 0, 5);
+    d = wiper_policy_step(&p, 2000, true, 0, 0, 0, 5);
+    CHECK_EQ(d.reason, WIPER_DECISION_PASSTHROUGH_RAISE_ONLY);
+    CHECK_EQ(d.modify, 0);
+}
+
+static void test_policy_rise_debounce(void)
+{
+    puts("wiper_policy: debounced rise");
+    wiper_policy_t p = make_policy_ex(100, 0);
+
+    wiper_decision_t d = wiper_policy_step(&p, 0, true, 0, 0, 0, 0);
+    CHECK_EQ(d.speed, 0);
+
+    /* One glitched reading of 15 for 50 ms, then dry again → never wipes. */
+    d = wiper_policy_step(&p, 10, true, 0, 0, 15, 0);
+    CHECK_EQ(d.speed, 0);
+    d = wiper_policy_step(&p, 60, true, 0, 0, 0, 0);
+    CHECK_EQ(d.speed, 0);
+    CHECK_EQ(p.rise_pending, 0);
+    d = wiper_policy_step(&p, 200, true, 0, 0, 0, 0);
+    CHECK_EQ(d.speed, 0);
+
+    /* Sustained rain rises after the hold, to the lowest level seen in it. */
+    d = wiper_policy_step(&p, 1000, true, 0, 0, 9, 0);
+    CHECK_EQ(d.speed, 0);
+    d = wiper_policy_step(&p, 1050, true, 0, 0, 6, 0);
+    CHECK_EQ(d.speed, 0);
+    d = wiper_policy_step(&p, 1100, true, 0, 0, 9, 0);
+    CHECK_EQ(d.speed, 6);
+    CHECK_EQ(d.reason, WIPER_DECISION_OVERRIDE_UP);
+    d = wiper_policy_step(&p, 1150, true, 0, 0, 9, 0);   /* new rise window 6 → 9 */
+    CHECK_EQ(d.speed, 6);
+    d = wiper_policy_step(&p, 1250, true, 0, 0, 9, 0);
+    CHECK_EQ(d.speed, 9);
+
+    /* A higher reading during a pending fall cancels the fall but is itself
+     * debounced; the speed never dips below what we were holding. */
+    d = wiper_policy_step(&p, 1300, true, 0, 0, 2, 0);
+    CHECK_EQ(d.speed, 9);
+    CHECK_EQ(p.fall_pending, 1);
+    d = wiper_policy_step(&p, 1350, true, 0, 0, 12, 0);
+    CHECK_EQ(d.speed, 9);
+    CHECK_EQ(p.fall_pending, 0);
+    d = wiper_policy_step(&p, 1450, true, 0, 0, 12, 0);
+    CHECK_EQ(d.speed, 12);
 }
 
 static void test_policy_time_wrap(void)
@@ -309,9 +542,9 @@ static void test_policy_time_wrap(void)
     puts("wiper_policy: millisecond counter wrap");
     wiper_policy_t p = make_policy();
     uint32_t t0 = 0xFFFFF000u;
-    wiper_policy_step(&p, t0, true, 0, 8, 0);
-    wiper_policy_step(&p, t0 + 100, true, 0, 1, 0);
-    wiper_decision_t d = wiper_policy_step(&p, t0 + 100 + 3000, true, 0, 1, 0);  /* wraps */
+    wiper_policy_step(&p, t0, true, 0, 0, 8, 0);
+    wiper_policy_step(&p, t0 + 100, true, 0, 0, 1, 0);
+    wiper_decision_t d = wiper_policy_step(&p, t0 + 100 + 3000, true, 0, 0, 1, 0);  /* wraps */
     CHECK_EQ(d.speed, 1);
 }
 
@@ -326,6 +559,12 @@ int main(void)
     test_policy_map_clamp();
     test_policy_hysteresis();
     test_policy_time_wrap();
+    test_policy_status_mask();
+    test_policy_raise_only();
+    test_policy_reason_strings();
+    test_bodyctrl_helpers();
+    test_policy_warmup();
+    test_policy_rise_debounce();
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

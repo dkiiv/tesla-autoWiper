@@ -66,3 +66,9 @@ uint8_t tesla_wiper_speed_get(const uint8_t *data);
  * put DAS_WIPER_SPEED_INVALID on the bus.
  */
 void tesla_wiper_speed_set(uint8_t *data, uint8_t speed);
+
+/** @brief  Read DAS_bodyControlsCounter (0..15, byte 6 upper nibble). */
+uint8_t tesla_bodyctrl_counter_get(const uint8_t *data);
+
+/** @brief  True if byte 7 of an 8-byte 0x3E9 payload is a valid checksum. */
+bool tesla_bodyctrl_checksum_ok(const uint8_t *data);

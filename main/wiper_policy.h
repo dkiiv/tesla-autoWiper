@@ -16,11 +16,26 @@
  *  must be suppressed.  The AP computer's value is only used as a fallback
  *  when we have no trustworthy sensor data.
  *
+ *  Exception — raise-only mode (cfg.raise_only, WIPER_ALLOW_OVERRIDE_DOWN 0
+ *  in config.h): we may RAISE the AP computer's speed but never lower it.
+ *  Off by default (the owner's decision is authoritative); recommended for
+ *  first road tests until the manual-stalk / washer question (ROADMAP
+ *  Phase 3.1, known issue #13) is answered.
+ *
  * Rules, in priority order
  * ────────────────────────
  *  1. Sensor invalid or stale            → pass the original frame through
  *                                          (fail-safe: a dead sensor must
  *                                          never leave the car without wipers).
+ *     Sensor status & status_fault_mask  → same (the sensor says it is
+ *                                          faulty / initialising).  The mask
+ *                                          is 0 = disabled by default because
+ *                                          the status bit meanings are
+ *                                          UNVERIFIED.
+ *  1c. Sensor fresh for less than warmup_ms → pass through.  A sensor that
+ *     has only just come up (boot, re-plug, recovery from a dropout or a
+ *     fault) must prove itself before it can overrule the car.  The
+ *     hysteresis below still tracks the rain during the warm-up.
  *  2. Original speed is SNA/INVALID (15) → pass through.  The AP computer
  *                                          marks the signal invalid when it
  *                                          isn't in control (boot, fault);
@@ -28,12 +43,16 @@
  *                                          untested territory.  Revisit after
  *                                          ROADMAP Phase 3 captures.
  *  3. Map rain intensity → target speed with a lookup table.
- *  4. Hysteresis: rises apply immediately; falls only after the lower
- *     target has persisted for fall_hold_ms (then drop to the highest target
- *     seen during that hold window).  Stops speed "hunting".
+ *  4. Hysteresis: rises apply after the higher target has persisted for
+ *     rise_hold_ms (then rise to the LOWEST target seen in that window, so
+ *     one glitched reading can't jump to max; 0 = immediate); falls only
+ *     after the lower target has persisted for fall_hold_ms (then drop to
+ *     the HIGHEST target seen in that window).  Stops speed "hunting".
  *  5. Output = our speed, regardless of the original request.  The frame is
  *     only rewritten when the values differ (saves a pointless checksum
  *     rewrite; the result on the bus is identical).
+ *     In raise-only mode, if our speed is LOWER than the original request,
+ *     the original frame passes through instead.
  *
  * What this does NOT know (yet)
  * ─────────────────────────────
@@ -54,7 +73,12 @@
 typedef struct {
     uint8_t  rain_to_speed[WIPER_POLICY_MAP_LEN];  /**< target Tesla speed per rain level */
     uint32_t fall_hold_ms;   /**< lower target must persist this long before slowing */
+    uint32_t rise_hold_ms;   /**< higher target must persist this long (0 = instant) */
+    uint32_t warmup_ms;      /**< sensor must be healthy this long before we act (0 = off) */
     uint32_t stale_ms;       /**< sensor reading older than this = invalid           */
+    uint8_t  status_fault_mask; /**< status & mask != 0 → sensor invalid (0 = off)   */
+    bool     raise_only;     /**< true → never lower the original request
+                                  (zero-initialised = authoritative, the default) */
 } wiper_policy_config_t;
 
 typedef enum {
@@ -63,6 +87,9 @@ typedef enum {
     WIPER_DECISION_AGREE,                      /**< car already asks for exactly ours  */
     WIPER_DECISION_OVERRIDE_UP,                /**< we raised the car's speed          */
     WIPER_DECISION_OVERRIDE_DOWN,              /**< we lowered it (e.g. phantom wipe)  */
+    WIPER_DECISION_PASSTHROUGH_SENSOR_FAULT,   /**< status byte hit status_fault_mask  */
+    WIPER_DECISION_PASSTHROUGH_RAISE_ONLY,     /**< raise-only: car asks for more      */
+    WIPER_DECISION_PASSTHROUGH_WARMUP,         /**< sensor healthy, but not long enough */
 } wiper_decision_reason_t;
 
 typedef struct {
@@ -77,6 +104,11 @@ typedef struct {
     bool     fall_pending;     /**< a lower target is waiting out the hold    */
     uint32_t fall_since_ms;
     uint8_t  fall_max;         /**< highest target seen during the hold       */
+    bool     rise_pending;     /**< a higher target is waiting out the hold   */
+    uint32_t rise_since_ms;
+    uint8_t  rise_min;         /**< lowest target seen during the rise hold   */
+    bool     healthy;          /**< sensor healthy since healthy_since_ms     */
+    uint32_t healthy_since_ms;
 } wiper_policy_t;
 
 /** @brief Reset state and copy config.  Out-of-range map entries are clamped to 14. */
@@ -88,11 +120,14 @@ void wiper_policy_init(wiper_policy_t *p, const wiper_policy_config_t *cfg);
  * @param now_ms          monotonic time
  * @param sensor_valid    last LIN poll produced a good frame
  * @param sensor_age_ms   now - time of that good frame
+ * @param sensor_status   status byte of that frame (checked against
+ *                        cfg.status_fault_mask)
  * @param rain_intensity  0..15 from the sensor
  * @param oem_speed       DAS_wiperSpeed in the frame as received from the car
  */
 wiper_decision_t wiper_policy_step(wiper_policy_t *p, uint32_t now_ms,
                                    bool sensor_valid, uint32_t sensor_age_ms,
+                                   uint8_t sensor_status,
                                    uint8_t rain_intensity, uint8_t oem_speed);
 
 /** @brief Human-readable reason string for logs. */

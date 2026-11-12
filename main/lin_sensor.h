@@ -48,6 +48,7 @@ typedef struct {
     uint32_t timeout;
     uint32_t bad_checksum;
     uint32_t bad_echo;
+    uint32_t status_fault;  /**< good frames whose status hit LIN_SENSOR_FAULT_MASK */
 } lin_sensor_stats_t;
 
 /* ─── Public API ────────────────────────────────────────────────────────── */
