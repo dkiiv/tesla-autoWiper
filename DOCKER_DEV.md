@@ -14,15 +14,17 @@ only host requirements are Docker, plus Python for flashing and monitoring.
 
 ```bash
 # 1. Optional: per-machine settings
-cp .env.example .env        # set FLASH_PORT, and IDF_TARGET if you're on the P4 bench board
+cp .env.example .env        # set FLASH_PORT, CAN_BITRATE_KBPS, and IDF_TARGET if you're on the P4 bench board
 
-# 2. Build (ESP32-C6 by default)
-./idf.sh build              # → ./firmware/
-IDF_TARGET=esp32p4 ./idf.sh build   # bench board
+# 2. Build (ESP32-C6 by default). CAN_BITRATE_KBPS is REQUIRED, no default:
+#    500 is expected for the car but UNCONFIRMED, so measure before installing.
+CAN_BITRATE_KBPS=500 ./idf.sh build                      # → ./firmware/
+CAN_BITRATE_KBPS=500 IDF_TARGET=esp32p4 ./idf.sh build   # bench board
 
 # 3. Flash + monitor
 ./idf.sh flash
 ./idf.sh monitor            # Ctrl+] to exit
+./idf.sh flash monitor      # both in one go
 
 # 4. Unit tests (no hardware)
 ./idf.sh test
@@ -32,7 +34,7 @@ IDF_TARGET=esp32p4 ./idf.sh build   # bench board
 
 | Command | What it does |
 |---|---|
-| `./idf.sh build` | Set target (`$IDF_TARGET`, default `esp32c6`), build, and copy the firmware to `./firmware/` |
+| `./idf.sh build` | Requires `$CAN_BITRATE_KBPS` (125/250/500/1000). Set target (`$IDF_TARGET`, default `esp32c6`), build, and copy the firmware to `./firmware/` |
 | `./idf.sh flash` | Flash from the host with esptool. The chip type and offsets are read from `firmware/flash_args` and `firmware/flasher_args.json`, so a C6 image can't be flashed onto a P4 by mistake |
 | `./idf.sh monitor` | Serial monitor (Ctrl+] to exit) |
 | `./idf.sh test` | Host unit tests (`make -C test`) inside the container |
@@ -64,8 +66,11 @@ offsets.
 With a native ESP-IDF v5.3.2 install (`. $IDF_PATH/export.sh`):
 
 ```bash
-idf.py -B build set-target esp32c6 build
+idf.py -B build -DCAN_BITRATE_KBPS=500 set-target esp32c6 build
 ```
+
+The bitrate is stored in that build directory's CMake cache. Run
+`idf.py -B build fullclean` (or pass a new `-DCAN_BITRATE_KBPS=`) to change it.
 
 Note that IDF 5.3 does not support Python 3.13+. Use 3.12 or older for the IDF
 Python environment.
