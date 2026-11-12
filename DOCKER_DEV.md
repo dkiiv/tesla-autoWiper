@@ -1,7 +1,8 @@
 # Docker Dev Environment — tesla-autoWiper
 
 A self-contained ESP-IDF v5.3.2 build environment with one-line commands. The
-only host requirements are Docker, plus Python for flashing and monitoring.
+only host requirement for building and testing is Docker. Flashing and
+monitoring also need host Python 3.
 
 ## Prerequisites
 
@@ -14,7 +15,7 @@ only host requirements are Docker, plus Python for flashing and monitoring.
 
 ```bash
 # 1. Optional: per-machine settings
-cp .env.example .env        # set FLASH_PORT, CAN_BITRATE_KBPS, and IDF_TARGET if you're on the P4 bench board
+cp .env.example .env        # set FLASH_PORT, CAN_BITRATE_KBPS, IDF_TARGET (command-line vars win over .env)
 
 # 2. Build (ESP32-C6 by default). CAN_BITRATE_KBPS is REQUIRED, no default:
 #    500 is expected for the car but UNCONFIRMED, so measure before installing.
@@ -34,7 +35,7 @@ CAN_BITRATE_KBPS=500 IDF_TARGET=esp32p4 ./idf.sh build   # bench board
 
 | Command | What it does |
 |---|---|
-| `./idf.sh build` | Requires `$CAN_BITRATE_KBPS` (125/250/500/1000). Set target (`$IDF_TARGET`, default `esp32c6`), build, and copy the firmware to `./firmware/` |
+| `./idf.sh build` | Requires `$CAN_BITRATE_KBPS` (125/250/500/1000). Set target (`$IDF_TARGET`, default `esp32c6`), build, and copy the firmware to `./firmware/`. `SNIFFER=1` builds the listen-only sniffer |
 | `./idf.sh flash` | Flash from the host with esptool. The chip type and offsets are read from `firmware/flash_args` and `firmware/flasher_args.json`, so a C6 image can't be flashed onto a P4 by mistake |
 | `./idf.sh monitor` | Serial monitor (Ctrl+] to exit) |
 | `./idf.sh test` | Host unit tests (`make -C test`) inside the container |

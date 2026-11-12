@@ -42,10 +42,11 @@ passthrough and the stock behavior is unchanged.
 
 | Area | State |
 |---|---|
-| Firmware compiles, C6 + P4 | ✅ verified (local native IDF 5.3.2 build, 2026-11-12, at `CAN_BITRATE_KBPS=500`; CI on every push) |
+| Firmware compiles, C6 + P4 | ✅ verified up to commit 3bed3f9 (local native IDF 5.3.2 build, 2026-11-12, at `CAN_BITRATE_KBPS=500`; CI on every push). ⚠️ The second-batch commits after it (sniffer, warm-up, debounce, log queue, LIN timing) were only checked against stub headers until CI builds them |
 | LIN PID / checksum, Tesla checksum, bit packing | ✅ unit-tested against independent reference implementations (opendbc / LIN spec) |
 | Wiper policy logic (map, hysteresis, stale, authoritative override, status fault mask, raise-only mode) | ✅ unit-tested |
 | Alert task on task watchdog, LIN counters under mutex | ✅ compiles; ❌ untested on hardware |
+| Sniffer build, warm-up, rise debounce, log queue, LIN RX timeout | ✅ policy parts unit-tested; ❌ ESP-side code not bench-tested |
 | C6 pin choice | ❌ untested on hardware |
 | LIN reads from the real sensor (byte map, echo behavior) | ❌ unverified |
 | CAN bitrate (no default; build requires `CAN_BITRATE_KBPS`; Tesla likely 500 kbit/s) | ❌ car rate unverified, **must measure before car install** |
@@ -72,18 +73,21 @@ main/
   main.c            app_main: init order, task spawn, [HEALTH] log (3 lines / 5 s)
   can_gateway.c/.h  Two forwarding tasks (one per direction, blocking RX, watchdog-fed)
                     + one alert task for bus-off recovery (also watchdog-fed).
-                    Counters for health log.
+                    Counters for health log. The sniffer build (CAN_LISTEN_ONLY)
+                    swaps the forwarding tasks for listen-only sniff tasks.
   lin_sensor.c/.h   LIN master: break via baud-halving, reads + verifies header echo,
                     enhanced checksum, timestamped latest reading, poll counters.
   wiper_logic.c/.h  Glue: for 0x3E9 → get sensor + age → wiper_policy_step → rewrite.
+                    Never logs from the CAN path: posts to a queue for wiper_log task.
   wiper_policy.c/.h PURE C. Decision rules (see header). Host-tested.
   protocol.c/.h     PURE C. LIN PID/checksum, Tesla checksum, DAS_wiperSpeed get/set
                     (set clamps to 14). Host-tested.
 test/               Plain-C test runner + Makefile. No ESP-IDF. `make -C test`.
 docs/hardware.md    Wiring requirements, BOM, TODO-to-measure sensor/harness tables.
 docs/bench-bringup.md  Bench procedure + pre-install checklist that gates the car.
-.github/workflows/ci.yml   host tests + build matrix [esp32c6, esp32p4]
+.github/workflows/ci.yml   host tests + build matrix [esp32c6, esp32p4] × [gateway, sniffer]
 idf.sh, Dockerfile, docker-compose.yml   containerized build; flash/monitor on host
+tools/make_3e9.py   build/verify 0x3E9 frames (cansend / candump --check)
 ```
 
 Data flow: TWAI0 RX → `can_fwd_task(car→act)` → `wiper_logic_process_can_frame`
@@ -99,6 +103,7 @@ can be pure goes there, with tests. Driver code stays thin.
 ```bash
 CAN_BITRATE_KBPS=500 ./idf.sh build                      # esp32c6 → ./firmware/
 CAN_BITRATE_KBPS=500 IDF_TARGET=esp32p4 ./idf.sh build   # bench board
+SNIFFER=1 CAN_BITRATE_KBPS=500 ./idf.sh build            # listen-only sniffer (Phase 3.1)
 ./idf.sh flash                       # chip + offsets read from build output
 ./idf.sh monitor
 ./idf.sh test                        # host unit tests in the container
@@ -137,8 +142,10 @@ warnings from `main/`.
 - Comment style: a file-level `@file/@brief` header, boxed section dividers
   (`/* ─── name ─── */`), and comments that explain *why*. When behavior
   changes, update the comments and diagrams in the same commit.
-- Logging: `ESP_LOGx` with a per-file TAG. **Nothing unconditional in hot
-  paths** (CAN forwarding, LIN poll). Use counters and the health log instead.
+- Logging: `ESP_LOGx` with a per-file TAG. **No console I/O at all in the
+  CAN forwarding path**, not even on transitions (it blocks): post to a
+  queue that a low-priority task drains, as wiper_logic.c does. Nothing
+  unconditional in the LIN poll. Use counters and the health log instead.
   Per-frame logging must be behind a `DEBUG_*` switch.
 - Commits: small, with an imperative subject line in the style of the existing
   history. Author: dkiiv <curtis.x.jenkins@gmail.com>.

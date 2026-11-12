@@ -77,8 +77,12 @@ VAG rain/light sensor ──LIN──► ESP32 ◄──CAN (TWAI0)── AP com
   bits pass through untouched.
 - **Wiper policy** (`main/wiper_policy.h`):
   - Rain intensity is mapped to a Tesla speed through a lookup table.
-  - Speed goes up immediately and only comes down after 3 s, so the wipers
-    don't hunt between speeds.
+  - Speed goes up once a higher reading has held for 100 ms (so one glitched
+    reading can't jump to max), and only comes down after 3 s, so the
+    wipers don't hunt between speeds.
+  - After boot, a dropout or a reported sensor fault, the sensor must stay
+    healthy for 2 s (`WIPER_WARMUP_MS`) before the device overrules Tesla.
+    Until then Tesla's request passes through.
   - **It's authoritative (default).** While the sensor is healthy, its speed
     is what goes on the bus, whether that's higher or lower than Tesla's
     request. A phantom wipe on dry glass is forced to OFF.
@@ -199,16 +203,27 @@ CAN_BITRATE_KBPS=500 IDF_TARGET=esp32p4 ./idf.sh build   # ESP32-P4 bench board
 ./idf.sh monitor
 ./idf.sh flash monitor               # both
 ./idf.sh test                        # host unit tests (protocol + wiper policy)
+SNIFFER=1 CAN_BITRATE_KBPS=500 ./idf.sh build   # listen-only sniffer (connect in PARALLEL)
 ```
+
+**Sniffer build (`SNIFFER=1`, or `-DWIPER_SNIFFER=1` natively):** both CAN
+controllers listen only. It never transmits, not even ACKs or error frames,
+and forwards nothing. It checks and logs 0x3E9 frames (checksum, counter,
+interval, wiper speed). Use it for ROADMAP Phase 3.1 to measure the car's
+bus. **Connect it in parallel (a T-tap), never inline**: inline, it cuts
+the bus.
+
+Variables set on the command line win over `.env`.
 
 Native ESP-IDF: `idf.py -B build -DCAN_BITRATE_KBPS=500 set-target esp32c6 build`.
 
 If you have a C compiler and `make`, you can run the tests without Docker:
 `make -C test`.
 
-CI (GitHub Actions) runs the unit tests and builds both chips on every push.
-CI firmware artifacts are **bench builds at 500 kbit/s**
-(`firmware-<target>-bench-500kbps-UNVERIFIED`), not validated car images.
+CI (GitHub Actions) runs the unit tests and builds both chips, as gateway
+and sniffer, on every push. CI firmware artifacts are **bench builds at 500
+kbit/s** (`firmware-<target>-<gateway|sniffer>-bench-500kbps-UNVERIFIED`),
+not validated car images.
 
 Before bench work, read [docs/bench-bringup.md](docs/bench-bringup.md).
 
@@ -223,7 +238,8 @@ tesla-autoWiper/
 ├── docs/bench-bringup.md      ← bench procedure + pre-install checklist
 ├── CMakeLists.txt, sdkconfig.defaults
 ├── Dockerfile, docker-compose.yml, idf.sh, DOCKER_DEV.md, .env.example
-├── .github/workflows/ci.yml   ← unit tests + C6/P4 builds
+├── .github/workflows/ci.yml   ← unit tests + C6/P4 × gateway/sniffer builds
+├── tools/make_3e9.py          ← build/verify 0x3E9 frames for cansend/candump
 ├── test/                      ← host unit tests (plain C, no ESP-IDF)
 └── main/
     ├── config.h               ← ALL pins, IDs, timings, policy tuning, debug switches
@@ -242,7 +258,7 @@ Every 5 s you get three `[HEALTH]` lines:
 ```
 [HEALTH] LIN OK  rain=3 light=120 st=0x00 age=12ms ok/to/cs/echo/flt=1234/0/0/0/0
 [HEALTH] CAN car→act rx=51234 drop=0 miss=0 off=0 | act→car rx=8812 drop=0 miss=0 off=0
-[HEALTH] WIPER 0x3E9 seen=500 modified=480 badDLC=0 fault=0 oem=5 out=0 mode=auth
+[HEALTH] WIPER 0x3E9 seen=500 modified=480 badDLC=0 fault=0 oem=5 out=0 mode=auth override(down) logDrop=0
 ```
 
 - **LIN `--`:** no fresh sensor data, so the device is in passthrough.
@@ -257,6 +273,17 @@ Every 5 s you get three `[HEALTH]` lines:
   actually sent. In the example, `oem=5 out=0` is a suppressed phantom wipe.
 - **`fault`:** 0x3E9 frames passed through because the sensor status matched
   the fault mask. **`mode`:** `auth` (authoritative) or `raise` (raise-only).
+- **Reason** (after `mode`): why the last frame got its value:
+  `passthrough(no sensor)`, `passthrough(sensor fault)`,
+  `passthrough(warm-up)`, `passthrough(oem SNA)`, `passthrough(raise-only)`,
+  `agree`, `override(up)` or `override(down)`. **`logDrop`** counts
+  transition log lines dropped because the log queue was full. Logging never
+  runs in the CAN forwarding task.
+
+In the sniffer build, the WIPER line is replaced by one `SNIFF TWAI0/1` line
+per controller (0x3E9 `seen`, `badDLC`, `badCS`, `ctrSkip`, min..max frame
+interval, last `speed`). Each 0x3E9 frame that changes the speed or fails
+its checksum is also logged.
 
 ---
 

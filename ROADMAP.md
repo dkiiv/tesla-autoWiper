@@ -79,6 +79,15 @@ and later need the bench or the car.
       alert task on the task watchdog; LIN counters under the mutex;
       `./idf.sh flash monitor` fixed. New docs: `docs/hardware.md`,
       `docs/bench-bringup.md`.
+- [x] **Second batch (2026-11-12), code done, hardware unverified, only
+      stub-compiled:** a listen-only **sniffer build** (`SNIFFER=1` /
+      `-DWIPER_SNIFFER=1`) for Phase 3.1; a 2 s **sensor warm-up**
+      (`WIPER_WARMUP_MS`) before taking authority, restarted by any dropout
+      or fault; a 100 ms **rise debounce** (`WIPER_RISE_HOLD_MS`); wiper
+      transition logging moved out of the CAN forwarding task (queue +
+      low-priority task); a lower LIN UART RX idle timeout and a settle
+      delay after the break; `.env` no longer overrides the command line;
+      host Python only needed for flash/monitor; `tools/make_3e9.py`.
 - [ ] **Bench run** to close out this phase. Exit criterion: on the P4 bench
       (or a C6 dev board), with the sensor connected and hand-wetted, the
       health log shows `LIN OK` and speed transitions are stable. A second CAN
@@ -117,7 +126,9 @@ The detailed version (wiring, SocketCAN commands, expected output) is
 
 Each step is only safe if the previous one passed.
 
-1. [ ] **Sniff first, inject nothing.** Find the harness point that carries
+1. [ ] **Sniff first, inject nothing.** Build with `SNIFFER=1` (listen-only:
+       it never transmits, not even ACKs) and connect it **in parallel**
+       (a T-tap), not inline. Find the harness point that carries
        0x3E9 between the AP computer and the body controller. **Measure the
        bus bitrate** (500 kbit/s expected) and build with that
        `CAN_BITRATE_KBPS`. Record the bus, tap point, connector, pins and
@@ -199,7 +210,7 @@ Each step is only safe if the previous one passed.
 | 11 | config.h | C6 pins untested | ⚠️ open: bench check on a C6 board |
 | 12 | lin_sensor.c | Assumes the transceiver echoes TX (`LIN_EXPECT_ECHO=1`); a non-echo setup times out | ⚠️ by design, switch in config.h |
 | 13 | wiper_policy | Unknown whether the body controller ignores DAS_wiperSpeed when the stalk isn't in auto. **Higher stakes now that we're authoritative:** if it doesn't ignore it, we could force wipers OFF against a manual stalk setting or a washer cycle | ⚠️ open: Phase 3.1 captures, must answer before road use |
-| 14 | lin_sensor.c | `uart_set_baudrate` mid-frame for the break: timing on the C6 UART is unverified | ⚠️ open: scope it on the bench |
+| 14 | lin_sensor.c | `uart_set_baudrate` mid-frame for the break: timing on the C6 UART is unverified | ⚠️ open: settle delay added after the break; still scope it on the bench |
 | 15 | wiper_policy | "Sensor healthy" meant only "checksum valid"; status byte ignored | ✅ code done: `LIN_SENSOR_FAULT_MASK` + tests. ⚠️ mask is 0x00 (disabled) until the status bits are measured |
 | 16 | wiper_policy | A sensor that talks but isn't optically coupled reads dry forever; authoritative mode then forces wipers off in rain | ⚠️ open: no detection. Mitigation: raise-only mode (`WIPER_ALLOW_OVERRIDE_DOWN 0`, code done + tests) for first road tests |
 | 17 | can_gateway.c | Alert/recovery task not on the task watchdog | ✅ code done, hardware unverified |
@@ -210,3 +221,8 @@ Each step is only safe if the previous one passed.
 | 22 | main.c | Never sleeps: battery drain on an always-on feed | ⚠️ open: Phase 4 power work |
 | 23 | lin_sensor.c | Only polls 0x21; the sensor may need a master frame first | ⚠️ open: unknown until bench bring-up |
 | 24 | docs | Bus, tap point, connectors, pinouts, other nodes, sensor part number all undocumented | ⚠️ open: TODO tables in docs/hardware.md |
+| 25 | lin_sensor.c | UART RX idle timeout (10 symbols ≈ 5 ms) used up most of the 12 ms slot timeout, so polls could time out | ✅ code done (rx timeout 2 symbols, +8 ms margin), hardware unverified |
+| 26 | wiper_logic.c | `ESP_LOGI` on every speed transition ran inside the CAN forwarding task (console I/O blocks) | ✅ code done (queue + low-priority log task, `logDrop` counter) |
+| 27 | wiper_policy | A single glitched reading jumped straight to max speed; a freshly (re)connected sensor took authority on its first frame | ✅ code done + tests (100 ms rise debounce, 2 s warm-up) |
+| 28 | idf.sh | `.env` overrode command-line variables; host Python required even for build; volume name dropped `_` | ✅ fixed |
+| 29 | ROADMAP 3.1 | No safe way to measure the car's bus with this hardware | ✅ code done: sniffer build (listen-only); hardware unverified |

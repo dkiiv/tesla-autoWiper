@@ -127,6 +127,21 @@ candump -td can1     # wiper side
 
 Frames below are built with the checksum rule from the README
 (`(0xE9 + 0x03 + sum(bytes 0-6)) & 0xFF`), with counter nibble 1 in byte 6.
+`tools/make_3e9.py` builds them for you and checks captures:
+
+```bash
+./tools/make_3e9.py --speed 5 --counter 1           # → 3E9#500000000000104C
+./tools/make_3e9.py --speed 5 --count 200 --stream | \
+  while read f; do cansend can0 "$f"; sleep 0.05; done   # 20 Hz, rolling counter
+candump -L can1,3E9:7FF | ./tools/make_3e9.py --check     # checksum + counter per frame
+```
+
+**Timing before the override tests (2, 3):** once `LIN OK` appears, the
+sensor must stay healthy for `WIPER_WARMUP_MS` (2 s) before the device
+overrides anything. Until then the health reason is `passthrough(warm-up)`
+and frames pass unchanged. A sensor fault or a dropout restarts the
+warm-up. A rise also has to hold for `WIPER_RISE_HOLD_MS` (100 ms), so
+stream frames as above rather than sending a single one.
 
 1. **Passthrough, sensor unplugged.** Send a 0x3E9 asking for speed 5:
 
@@ -187,13 +202,47 @@ Frames below are built with the checksum rule from the README
    counters stay at 0 and the device doesn't reboot (a watchdog reset prints
    a panic + reboot on the console).
 
+10. **Warm-up and debounce.** With the sensor wet and frames streaming:
+    unplug the sensor (health → `passthrough(no sensor)` within about
+    0.5 s), plug it back in (about 2 s of `passthrough(warm-up)`, then our
+    speed). A brief splash that dries within 100 ms shouldn't raise the
+    speed.
+
+11. **Log path.** Watch `logDrop` in the WIPER health line. It counts
+    transition log lines dropped because the log queue was full. Forwarding
+    never waits on the console, so a non-zero value is cosmetic, but
+    record it.
+
+### Sniffer build check (before Phase 3.1)
+
+The sniffer build is how you measure the car's bus without risking it:
+
+```bash
+SNIFFER=1 CAN_BITRATE_KBPS=500 ./idf.sh build && ./idf.sh flash monitor
+```
+
+- The boot log shows `SNIFFER build: listen-only` and `TWAI0 ready
+  LISTEN-ONLY`. The WIPER health line is replaced by `SNIFF TWAI0/1` lines:
+  0x3E9 `seen`, `badCS`, `ctrSkip`, the min..max frame interval, and the
+  last speed.
+- Stream 0x3E9 from can0 (above). `seen` rises, and `badCS=0 ctrSkip=0`.
+  Send a corrupt frame (`cansend can0 3E9#5000000000001000`): it's logged
+  with `checksum=BAD`.
+- **The sniffer never ACKs, never transmits and forwards nothing.** Keep
+  the second adapter on the segment so frames get acknowledged.
+- In the car it connects **in parallel** (a T-tap, TWAI0 only), never
+  inline. If the bitrate is wrong it stays silent (no error frames), which
+  is the point: try 500, then the others, until `seen` rises and
+  `badCS=0`.
+
 ## 4. Pre-install checklist (gates the car)
 
 Don't connect this to a car until **every** box is ticked and the evidence
 is written down (ROADMAP / `docs/captures/`).
 
 - [ ] **Bitrate measured on the car** (ROADMAP Phase 3.1, sniff only, inject
-      nothing) and the firmware built with that exact `CAN_BITRATE_KBPS`.
+      nothing; use the `SNIFFER=1` build connected in parallel) and the
+      firmware built with that exact `CAN_BITRATE_KBPS`.
 - [ ] Harness tap point, connector, CANH/CANL pins and the other nodes on
       that segment documented in hardware.md §7.
 - [ ] Real 0x3E9 frames captured. `tesla_checksum` reproduces byte 7 for
