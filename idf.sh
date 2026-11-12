@@ -18,9 +18,21 @@
 
 set -euo pipefail
 
-# Optional per-machine settings (FLASH_PORT, IDF_TARGET) — see .env.example
+# Optional per-machine settings (FLASH_PORT, IDF_TARGET, CAN_BITRATE_KBPS,
+# SNIFFER) — see .env.example.  Values already set in the environment win
+# over .env, so a one-off `IDF_TARGET=esp32p4 ./idf.sh build` works even when
+# .env says esp32c6.
 if [ -f .env ]; then
-  set -a; . ./.env; set +a
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    case "$line" in ''|'#'*) continue ;; esac
+    key="${line%%=*}"
+    val="${line#*=}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    if [ -z "${!key+x}" ]; then
+      export "$key=$val"
+    fi
+  done < .env
 fi
 
 COMPOSE="docker compose"
@@ -74,22 +86,24 @@ PORT="${FLASH_PORT:-$(default_port)}"
 # ── Python command detection ──────────────────────────────────────────────────
 # Windows has a fake 'python' stub from the Microsoft Store that responds to
 # 'command -v' but isn't real Python. We verify by actually running it.
+# Only flash/monitor need host Python, so this runs lazily from those
+# commands (build/test/menuconfig work with Docker alone).
 PYTHON=""
-for candidate in python3 python py; do
-  if $candidate --version &>/dev/null 2>&1; then
-    PYTHON="$candidate"
-    break
-  fi
-done
-
-if [ -z "$PYTHON" ]; then
-  echo "❌  Python not found."
+ensure_python() {
+  [ -n "$PYTHON" ] && return 0
+  for candidate in python3 python py; do
+    if $candidate --version &>/dev/null 2>&1; then
+      PYTHON="$candidate"
+      return 0
+    fi
+  done
+  echo "❌  Python not found (needed on the host for flash/monitor)."
   echo "    Install from https://python.org (check 'Add to PATH' during install)"
   echo "    Then disable the Microsoft Store stub:"
   echo "    Settings > Apps > Advanced app settings > App execution aliases"
   echo "    → turn off 'python.exe' and 'python3.exe'"
   exit 1
-fi
+}
 
 # ── pip helper — handles externally-managed Python on modern macOS/Linux ──────
 
@@ -122,7 +136,10 @@ copy_firmware() {
   local out_dir="./firmware"
   mkdir -p "$out_dir"
   local vol
-  vol="$(basename "$(pwd)" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')_idf-build-cache"
+# Same normalisation docker compose applies to the project name
+  # (lowercase, keep a-z 0-9 _ -); COMPOSE_PROJECT_NAME wins if set.
+  vol="${COMPOSE_PROJECT_NAME:-$(basename "$(pwd)")}"
+  vol="$(printf '%s' "$vol" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')_idf-build-cache"
   docker run --rm \
     -v "${vol}:/build_vol" \
     -v "$(pwd)/${out_dir}":/out \
@@ -139,6 +156,7 @@ copy_firmware() {
 }
 
 ensure_esptool() {
+  ensure_python
   if ! $PYTHON -m esptool version &>/dev/null; then
     echo "📦  esptool not found — installing..."
     pip_install "esptool==4.8.1"
@@ -146,6 +164,7 @@ ensure_esptool() {
 }
 
 ensure_pyserial() {
+  ensure_python
   if ! $PYTHON -c "import serial" &>/dev/null; then
     echo "📦  pyserial not found — installing..."
     pip_install pyserial
@@ -193,10 +212,18 @@ case "$CMD" in
       echo "    or put CAN_BITRATE_KBPS=500 in .env.  Supported: 125, 250, 500, 1000."
       exit 1
     fi
-    echo "🚗  CAN bitrate: ${CAN_BITRATE_KBPS} kbit/s   target: ${IDF_TARGET:-esp32c6}"
+    # SNIFFER=1 → listen-only build (connect in parallel, never inline).
+    # Always passed explicitly so a cached sniffer build can't leak into a
+    # normal one.
+    case "${SNIFFER:-0}" in
+      0|1) ;;
+      *) echo "❌  SNIFFER must be 0 or 1 (got '${SNIFFER}')"; exit 1 ;;
+    esac
+    echo "🚗  CAN bitrate: ${CAN_BITRATE_KBPS} kbit/s   target: ${IDF_TARGET:-esp32c6}   sniffer: ${SNIFFER:-0}"
     ensure_image
     $COMPOSE run --rm idf idf.py -B "$BUILD_DIR" \
       -DCAN_BITRATE_KBPS="${CAN_BITRATE_KBPS}" \
+      -DWIPER_SNIFFER="${SNIFFER:-0}" \
       set-target "${IDF_TARGET:-esp32c6}" \
       build
     copy_firmware
@@ -292,6 +319,7 @@ Commands:
 Environment variables:
   FLASH_PORT         Override serial port
   IDF_TARGET         ESP-IDF target chip (default: esp32c6; bench board: esp32p4)
+  SNIFFER            1 = listen-only sniffer build (connect in parallel, NOT inline)
   CAN_BITRATE_KBPS   REQUIRED for build: 125, 250, 500 or 1000 (no default;
                      measure the car first, 500 expected but UNCONFIRMED)
 
