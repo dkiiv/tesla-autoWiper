@@ -204,14 +204,14 @@ case "$CMD" in
 
   flash)
     do_flash
+    # `./idf.sh flash monitor` arrives as CMD=flash + "$1"=monitor (the old
+    # "flash monitor" case label could never match, so monitor never ran).
+    if [ "${1:-}" = "monitor" ]; then
+      do_monitor
+    fi
     ;;
 
   monitor)
-    do_monitor
-    ;;
-
-  "flash monitor")
-    do_flash
     do_monitor
     ;;
 

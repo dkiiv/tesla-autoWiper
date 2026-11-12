@@ -110,11 +110,19 @@ void app_main(void)
     ESP_ERROR_CHECK(can_gateway_init());
     ESP_ERROR_CHECK(can_gateway_start());
 
+    /* Both non-fatal: without them CAN passthrough still runs. */
+    bool lin_running = false;
     if (lin_ret == ESP_OK) {
-        xTaskCreate(lin_sensor_task, "lin_sensor", TASK_STACK_LIN_POLL, NULL,
-                    TASK_PRIORITY_LIN_POLL, NULL);
+        lin_running = xTaskCreate(lin_sensor_task, "lin_sensor", TASK_STACK_LIN_POLL, NULL,
+                                  TASK_PRIORITY_LIN_POLL, NULL) == pdPASS;
+        if (!lin_running) {
+            ESP_LOGE(TAG, "LIN task create failed - CAN passthrough only");
+        }
     }
-    xTaskCreate(health_task, "health", TASK_STACK_HEALTH, NULL, TASK_PRIORITY_HEALTH, NULL);
+    if (xTaskCreate(health_task, "health", TASK_STACK_HEALTH, NULL,
+                    TASK_PRIORITY_HEALTH, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Health task create failed - no [HEALTH] log");
+    }
 
-    ESP_LOGI(TAG, "Running  CAN passthrough=ON  LIN=%s", lin_ret == ESP_OK ? "ON" : "OFF");
+    ESP_LOGI(TAG, "Running  CAN passthrough=ON  LIN=%s", lin_running ? "ON" : "OFF");
 }
