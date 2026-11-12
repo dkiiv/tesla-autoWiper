@@ -4,8 +4,8 @@
 # Supports: macOS, Linux, Windows (Git Bash or WSL)
 #
 # Usage:
-#   ./idf.sh build                      # esp32c6 (production)
-#   IDF_TARGET=esp32p4 ./idf.sh build   # bench board
+#   CAN_BITRATE_KBPS=500 ./idf.sh build                      # esp32c6 (production)
+#   CAN_BITRATE_KBPS=500 IDF_TARGET=esp32p4 ./idf.sh build   # bench board
 #   ./idf.sh test                       # host unit tests
 #   ./idf.sh flash
 #   ./idf.sh monitor
@@ -185,8 +185,18 @@ shift || true
 case "$CMD" in
 
   build)
+    # No default CAN bitrate on purpose: a wrong rate kills the bus segment.
+    if [ -z "${CAN_BITRATE_KBPS:-}" ]; then
+      echo "❌  CAN_BITRATE_KBPS is not set."
+      echo "    Measure the car's bus first (500 kbit/s expected, UNCONFIRMED), then e.g.:"
+      echo "      CAN_BITRATE_KBPS=500 ./idf.sh build"
+      echo "    or put CAN_BITRATE_KBPS=500 in .env.  Supported: 125, 250, 500, 1000."
+      exit 1
+    fi
+    echo "🚗  CAN bitrate: ${CAN_BITRATE_KBPS} kbit/s   target: ${IDF_TARGET:-esp32c6}"
     ensure_image
     $COMPOSE run --rm idf idf.py -B "$BUILD_DIR" \
+      -DCAN_BITRATE_KBPS="${CAN_BITRATE_KBPS}" \
       set-target "${IDF_TARGET:-esp32c6}" \
       build
     copy_firmware
@@ -282,6 +292,8 @@ Commands:
 Environment variables:
   FLASH_PORT         Override serial port
   IDF_TARGET         ESP-IDF target chip (default: esp32c6; bench board: esp32p4)
+  CAN_BITRATE_KBPS   REQUIRED for build: 125, 250, 500 or 1000 (no default;
+                     measure the car first, 500 expected but UNCONFIRMED)
 
 Default ports by OS:
   macOS              /dev/tty.usbmodem101   (find yours: ./idf.sh port)
@@ -289,7 +301,7 @@ Default ports by OS:
   WSL / Windows      COM3                   (find yours: ./idf.sh port)
 
 Examples:
-  ./idf.sh build
+  CAN_BITRATE_KBPS=500 ./idf.sh build
   ./idf.sh flash
   ./idf.sh monitor
   ./idf.sh flash monitor

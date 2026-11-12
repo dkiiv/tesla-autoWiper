@@ -65,16 +65,40 @@
 /* ─── CAN (TWAI) ─────────────────────────────────────────────────────────── */
 
 /*
- * Both buses run at the same rate.
+ * CAN bitrate in kbit/s, both buses.  THERE IS NO DEFAULT, ON PURPOSE.
  *
- * !! CHECK BEFORE INSTALLING IN THE CAR !!
- * Tesla Model 3/Y vehicle/party buses are generally reported as 500 kbit/s.
- * 1 Mbit/s was set for bench work.  A wrong bitrate means the gateway
- * receives nothing and the wipers lose their command path.  Confirm with a
- * sniffer on the actual harness (ROADMAP Phase 3, step 1) and set this to match.
+ * !! A WRONG BITRATE IN THE CAR = A DEAD BUS SEGMENT !!
+ * The gateway would receive nothing, so every frame behind it stops
+ * (not just the wipers).  Tesla Model 3/Y vehicle/party buses are generally
+ * reported as 500 kbit/s — EXPECTED, UNCONFIRMED.  Measure it on the actual
+ * harness with a sniffer first (ROADMAP Phase 3, step 1).
+ *
+ * Set it one of two ways:
+ *   1. On the command line (recommended, nothing to forget in the tree):
+ *        CAN_BITRATE_KBPS=500 ./idf.sh build
+ *        idf.py -B build -DCAN_BITRATE_KBPS=500 set-target esp32c6 build
+ *      main/CMakeLists.txt turns that into a compile definition.  The value
+ *      is remembered in that build dir's CMake cache until `fullclean`.
+ *   2. Or uncomment and edit the line below.
+ *
+ * Supported values: 125, 250, 500, 1000.  The rate is printed at boot.
+ * CI builds use 500 and are labelled bench builds (see .github/workflows).
  */
+// #define CAN_BITRATE_KBPS     500
+
+#ifndef CAN_BITRATE_KBPS
+#error "CAN_BITRATE_KBPS is not set. Measure the car's bus first (500 kbit/s expected, UNCONFIRMED), then build with e.g. `CAN_BITRATE_KBPS=500 ./idf.sh build` or `idf.py -DCAN_BITRATE_KBPS=500 build`. See main/config.h."
+#elif CAN_BITRATE_KBPS == 125
+#define CAN_BAUD_RATE           TWAI_TIMING_CONFIG_125KBITS()
+#elif CAN_BITRATE_KBPS == 250
+#define CAN_BAUD_RATE           TWAI_TIMING_CONFIG_250KBITS()
+#elif CAN_BITRATE_KBPS == 500
+#define CAN_BAUD_RATE           TWAI_TIMING_CONFIG_500KBITS()
+#elif CAN_BITRATE_KBPS == 1000
 #define CAN_BAUD_RATE           TWAI_TIMING_CONFIG_1MBITS()
-// #define CAN_BAUD_RATE        TWAI_TIMING_CONFIG_500KBITS()
+#else
+#error "Unsupported CAN_BITRATE_KBPS: use 125, 250, 500 or 1000 (or add a TWAI_TIMING_CONFIG_* case in config.h)"
+#endif
 
 /* Driver RX/TX queue depth per controller.  Frames, not bytes. */
 #define CAN_RX_QUEUE_LEN        64

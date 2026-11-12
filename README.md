@@ -72,9 +72,13 @@ The C6 pins are a first pick from free, non-strapping pins on the
 ESP32-C6-DevKitC-1 and haven't been tested on hardware yet. Change them in
 `main/config.h` to match your board.
 
-**CAN bitrate:** currently set to 1 Mbit/s for bench work. Tesla vehicle buses
-are generally reported as **500 kbit/s**. Confirm with a sniffer and set
-`CAN_BAUD_RATE` in `config.h` before connecting to a car.
+**CAN bitrate: there is no default, and the build fails until you choose
+one.** Tesla vehicle buses are generally reported as **500 kbit/s**. That's
+expected but **unconfirmed** for the bus this device sits on. Measure it
+with a sniffer before connecting to a car, then build with
+`CAN_BITRATE_KBPS=<rate>` (see [Build, flash, test](#build-flash-test)). A
+wrong rate in the car means a dead bus segment. The boot log prints the
+compiled-in rate.
 
 ### Recommended ICs
 - **CAN transceivers:** SN65HVD230 (3.3 V, works directly with the ESP32), TJA1050, or MCP2551 (5 V parts need level care)
@@ -128,8 +132,8 @@ Windows and a terminal on macOS/Linux. See [DOCKER_DEV.md](DOCKER_DEV.md) for
 details.
 
 ```bash
-./idf.sh build                       # ESP32-C6 (production, default)
-IDF_TARGET=esp32p4 ./idf.sh build    # ESP32-P4 bench board
+CAN_BITRATE_KBPS=500 ./idf.sh build                      # ESP32-C6 (production, default)
+CAN_BITRATE_KBPS=500 IDF_TARGET=esp32p4 ./idf.sh build   # ESP32-P4 bench board
 ./idf.sh flash                       # chip + offsets come from the build
 ./idf.sh monitor
 ./idf.sh test                        # host unit tests (protocol + wiper policy)

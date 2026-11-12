@@ -90,6 +90,7 @@ static esp_err_t init_twai_controller(int controller_id, gpio_num_t tx_pin,
 
 esp_err_t can_gateway_init(void)
 {
+    ESP_LOGI(TAG, "CAN bitrate %d kbit/s (both controllers)", CAN_BITRATE_KBPS);
     esp_err_t ret = init_twai_controller(0, CAN_CAR_TX_PIN, CAN_CAR_RX_PIN, &s_can_car);
     if (ret != ESP_OK) return ret;
     ret = init_twai_controller(1, CAN_WIPER_TX_PIN, CAN_WIPER_RX_PIN, &s_can_act);
